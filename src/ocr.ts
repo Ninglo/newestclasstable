@@ -324,6 +324,8 @@ const uniqueStrings = (values: Array<string | null | undefined>): string[] => {
 
 const cleanLine = (line: string): string => line.replace(/\s+/g, ' ').trim();
 
+const compactText = (text: string): string => text.replace(/\r/g, ' ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
 const normalizeTimeText = (value: string): string =>
   value
     .replace(/\s*[:：]\s*/g, ':')
@@ -372,10 +374,10 @@ const parseClassName = (text: string): string => {
 };
 
 const parseClassTime = (text: string): string => {
-  const compact = text.replace(/\r/g, ' ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+  const compact = compactText(text).replace(/选择星期|选择校区/g, ' ').replace(/\bv\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
   const patterns = [
-    /\d{1,2}\s*月\s*\d{1,2}\s*日\s*(?:星期|周)?\s*[一二三四五六日天]?\s*\d{1,2}\s*[:：]\s*\d{2}(?:\s*[-~—至]\s*\d{1,2}\s*[:：]\s*\d{2})?/,
+    /\d{1,2}\s*月\s*\d{1,2}\s*日(?:\s*(?:星期|周)\s*[一二三四五六日天]?)?(?:\s*[-vV])*\s*\d{1,2}\s*[:：]\s*\d{2}(?:\s*[-~—至]\s*\d{1,2}\s*[:：]\s*\d{2})?/,
     /周[一二三四五六日天]\s*\d{1,2}\s*[:：]\s*\d{2}\s*[-~—至]\s*\d{1,2}\s*[:：]\s*\d{2}/,
     /\d{1,2}\s*月\s*\d{1,2}\s*日\s*(?:星期|周)?\s*[一二三四五六日天]?/,
     /\d{1,2}\s*[:：]\s*\d{2}\s*[-~—至]\s*\d{1,2}\s*[:：]\s*\d{2}/
@@ -390,32 +392,40 @@ const parseClassTime = (text: string): string => {
 };
 
 const parseLocation = (text: string): { campus: string; building: string; room: string; floor: string } => {
+  const compact = compactText(text);
   const lines = text
     .replace(/\r/g, '\n')
     .split('\n')
     .map(cleanLine)
     .filter(Boolean);
 
-  const locationLine = lines.find((line) => /(校区|楼|座|教室)/.test(line)) ?? text.replace(/\r/g, ' ').replace(/\n/g, ' ');
+  const locationLine =
+    lines.find((line) => /(校区|楼|座|教室)/.test(line)) ??
+    compact;
 
   let campus = '';
   let building = '';
   let room = '';
   let floor = '';
 
-  const campusMatch = locationLine.match(/([A-Za-z]?\d{1,3}\s*校区|七彩校区)/);
+  const campusMatch = compact.match(/([A-Za-z]?\d{1,3}\s*校区|七彩校区)/) ?? locationLine.match(/([A-Za-z]?\d{1,3}\s*校区|七彩校区)/);
   if (campusMatch?.[1]) {
     campus = cleanLine(campusMatch[1]).replace(/\s+/g, '');
   } else {
-    const campusCode = locationLine.match(/\b(C\d{2,3})\b/i);
+    const campusCode = compact.match(/\b(C\d{2,3})\b/i) ?? locationLine.match(/\b(C\d{2,3})\b/i);
     if (campusCode?.[1]) campus = campusCode[1].toUpperCase();
   }
 
+  const afterCampus =
+    campusMatch && typeof campusMatch.index === 'number'
+      ? compact.slice(campusMatch.index + campusMatch[0].length)
+      : locationLine;
+
   const buildingParts: string[] = [];
-  const seatMatch = locationLine.match(/([A-Za-z]\s*座)/);
+  const seatMatch = afterCampus.match(/([A-Za-z]\s*座)/) ?? compact.match(/([A-Za-z]\s*座)/);
   if (seatMatch?.[1]) buildingParts.push(seatMatch[1].replace(/\s+/g, ''));
 
-  const floorMatch = locationLine.match(/(\d+)\s*楼/);
+  const floorMatch = afterCampus.match(/(\d+)\s*楼/) ?? compact.match(/(\d+)\s*楼/);
   if (floorMatch?.[1]) {
     floor = floorMatch[1];
     buildingParts.push(`${floorMatch[1]}楼`);
@@ -423,11 +433,16 @@ const parseLocation = (text: string): { campus: string; building: string; room: 
 
   building = buildingParts.join(' ').trim();
 
-  const roomWithSuffix = locationLine.match(/(\d{2,4})\s*教室/);
+  const afterFloor =
+    floorMatch && typeof floorMatch.index === 'number'
+      ? afterCampus.slice(floorMatch.index + floorMatch[0].length)
+      : afterCampus;
+
+  const roomWithSuffix = afterFloor.match(/(\d{2,4})\s*教室/) ?? compact.match(/(\d{2,4})\s*教室/);
   if (roomWithSuffix?.[1]) {
     room = roomWithSuffix[1];
   } else {
-    const roomOnly = locationLine.match(/(?:楼|座)\s*(\d{2,4})(?!\s*[:：])/);
+    const roomOnly = afterFloor.match(/(\d{2,4})(?!\s*[:：])/) ?? compact.match(/(?:楼|座)\s*(\d{2,4})(?!\s*[:：])/);
     if (roomOnly?.[1]) room = roomOnly[1];
   }
 
@@ -641,6 +656,37 @@ const buildGroupSeatPlan = (tokens: PositionedName[]): string[][] => {
   return groups;
 };
 
+const countPlacedStudents = (groups: string[][]): number => sanitizeStudentNames(uniqueStrings(groups.flat())).length;
+
+const fillEmptySeatsWithNames = (groups: string[][], names: string[]): string[][] => {
+  const filled = groups.map((group) => [...group]);
+  const used = new Set(
+    sanitizeStudentNames(uniqueStrings(groups.flat())).map((name) => name.toLowerCase())
+  );
+  const remaining = sanitizeStudentNames(names).filter((name) => !used.has(name.toLowerCase()));
+  let cursor = 0;
+
+  for (let groupIndex = 0; groupIndex < filled.length; groupIndex += 1) {
+    for (let seatIndex = 0; seatIndex < filled[groupIndex].length; seatIndex += 1) {
+      if (filled[groupIndex][seatIndex]) continue;
+      if (cursor >= remaining.length) {
+        return filled;
+      }
+      filled[groupIndex][seatIndex] = remaining[cursor];
+      used.add(remaining[cursor].toLowerCase());
+      cursor += 1;
+    }
+  }
+
+  return filled;
+};
+
+const shouldTrustGeometryLayout = (placedByGeometry: number, supplementalCount: number): boolean => {
+  if (placedByGeometry >= 10) return true;
+  if (placedByGeometry >= 6 && placedByGeometry >= Math.floor(supplementalCount * 0.45)) return true;
+  return false;
+};
+
 const inferThreeRowsHalfCols = (text: string, sideBuckets: PositionedName[][]): number => {
   const labelMatches = Array.from(text.matchAll(/[左右]\s*([1-9]\d?)/g))
     .map((match) => Number(match[1]))
@@ -813,6 +859,10 @@ const parseCandidate = (rawText: string, words: OCRWordBox[]): ParsedCandidate =
   const tokens = extractPositionedNames(words);
   const geometryLayout = detectLayoutByGeometry(tokens);
   const fallbackLikelyNames = prioritizeEnglishNames(extractLikelyNamesFromText(rawText)).slice(0, 36);
+  const supplementalNames = prioritizeEnglishNames([
+    ...fallbackLikelyNames,
+    ...extractLikelyNamesFromWords(words, 50)
+  ]).slice(0, 36);
 
   let layout: LayoutType = textLayout ?? geometryLayout ?? 'circular';
   if (textLayout && geometryLayout && textLayout !== geometryLayout) {
@@ -830,13 +880,14 @@ const parseCandidate = (rawText: string, words: OCRWordBox[]): ParsedCandidate =
       groups = buildGroupSeatPlan(tokens);
     }
 
-    const placedByGeometry = uniqueStrings(groups.flat()).length;
-    if (
-      fallbackLikelyNames.length >= 12 &&
-      (placedByGeometry < Math.max(12, Math.floor(fallbackLikelyNames.length * 0.85)) ||
-        (fallbackLikelyNames.length >= 20 && placedByGeometry < 20))
-    ) {
+    groups = sanitizeSeatGroups(groups);
+    const placedByGeometry = countPlacedStudents(groups);
+    if (placedByGeometry === 0) {
       groups = buildFallbackGroupsByLayout(layout, fallbackLikelyNames);
+    } else if (shouldTrustGeometryLayout(placedByGeometry, supplementalNames.length)) {
+      groups = fillEmptySeatsWithNames(groups, supplementalNames);
+    } else if (supplementalNames.length > placedByGeometry + 4) {
+      groups = buildFallbackGroupsByLayout(layout, supplementalNames);
     }
   } else {
     const fallbackNames = fallbackLikelyNames.length > 0 ? fallbackLikelyNames : sanitizeStudentNames(parseStudentNames(rawText));
@@ -845,31 +896,10 @@ const parseCandidate = (rawText: string, words: OCRWordBox[]): ParsedCandidate =
 
   groups = sanitizeSeatGroups(groups);
 
-  let students = prioritizeEnglishNames(uniqueStrings(groups.flat()));
-  if (students.length < fallbackLikelyNames.length) {
-    students = prioritizeEnglishNames([...students, ...fallbackLikelyNames]);
-  }
-  if (words.length > 0) {
-    const supplemental = prioritizeEnglishNames(extractLikelyNamesFromWords(words, 50));
-    students = prioritizeEnglishNames([...students, ...supplemental]).slice(0, 36);
-  }
-
+  let students = prioritizeEnglishNames(uniqueStrings(groups.flat())).slice(0, 36);
   if (students.length === 0) {
-    students = prioritizeEnglishNames(parseStudentNames(rawText));
+    students = supplementalNames.length > 0 ? supplementalNames : prioritizeEnglishNames(parseStudentNames(rawText));
   }
-
-  const placedCount = sanitizeStudentNames(uniqueStrings(groups.flat())).length;
-  if (students.length > placedCount) {
-    groups = buildFallbackGroupsByLayout(layout, students);
-    groups = sanitizeSeatGroups(groups);
-  }
-
-  const finalStudents = prioritizeEnglishNames(uniqueStrings(groups.flat())).slice(0, 36);
-  if (finalStudents.length !== sanitizeStudentNames(uniqueStrings(groups.flat())).length) {
-    groups = buildFallbackGroupsByLayout(layout, finalStudents);
-    groups = sanitizeSeatGroups(groups);
-  }
-  students = prioritizeEnglishNames(uniqueStrings(groups.flat())).slice(0, 36);
 
   return {
     layout,
@@ -1096,14 +1126,15 @@ const buildDraft = (imageFile: File, rawText: string, bestResult: ParsedCandidat
   const classTime = parseClassTime(rawText);
   const location = parseLocation(rawText);
 
-  const monthDayMatch = classTime.match(/(\d{1,2})月\s*(\d{1,2})日/);
-  const weekdayMatch = classTime.match(/(星期[一二三四五六日]|周[一二三四五六日天])/);
-  const timeMatch = classTime.match(/(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)/);
+  const compact = compactText(rawText).replace(/选择星期|选择校区/g, ' ').replace(/\bv\b/gi, ' ');
+  const monthDayMatch = (classTime || compact).match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  const weekdayMatch = (classTime || compact).match(/(?:星期|周)\s*([一二三四五六日天])/);
+  const timeMatch = (classTime || compact).match(/(\d{1,2}\s*[:：]\s*\d{2}(?:\s*-\s*\d{1,2}\s*[:：]\s*\d{2})?)/);
 
   const date = monthDayMatch?.[1] ?? '';
   const day = monthDayMatch?.[2] ?? '';
-  const weekday = weekdayMatch?.[1]?.replace(/^周/, '星期') ?? '';
-  const time = timeMatch?.[1] ?? '';
+  const weekday = weekdayMatch?.[1] ? `星期${weekdayMatch[1].replace('天', '日')}` : '';
+  const time = timeMatch?.[1] ? normalizeTimeText(timeMatch[1]) : '';
   const fullDate = date ? monthDayToDateKey(date, day) ?? '' : '';
 
   return {

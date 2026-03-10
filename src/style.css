@@ -8,6 +8,7 @@
   --border: #d9e3ee;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
   --home-gradient: linear-gradient(130deg, #e9f5ff 0%, #f8fbff 40%, #ffffff 100%);
+  --editor-stage-scale: 0.8;
 }
 
 body.theme-sky {
@@ -209,8 +210,22 @@ button:disabled {
 }
 
 .editor-view {
-  max-width: 1400px;
+  max-width: 1800px;
   margin: 0 auto;
+  padding-bottom: 120px;
+}
+
+.editor-stage {
+  width: 100%;
+  zoom: var(--editor-stage-scale);
+  transform-origin: top center;
+}
+
+@supports not (zoom: 0.8) {
+  .editor-stage {
+    width: calc(100% / var(--editor-stage-scale));
+    transform: scale(var(--editor-stage-scale));
+  }
 }
 
 .back-home {
@@ -221,10 +236,10 @@ button:disabled {
 
 .main-content {
   display: flex;
-  gap: 20px;
+  gap: 18px;
   background: var(--panel);
-  padding: 20px;
-  border-radius: 15px;
+  padding: 18px;
+  border-radius: 18px;
   box-shadow: var(--shadow);
 }
 
@@ -234,7 +249,7 @@ button:disabled {
 
 .right-section {
   flex: 3;
-  max-width: 300px;
+  max-width: 360px;
   position: relative;
   min-height: 620px;
 }
@@ -867,6 +882,10 @@ button:disabled {
 }
 
 @media (max-width: 1024px) {
+  :root {
+    --editor-stage-scale: 1;
+  }
+
   .main-content {
     flex-direction: column;
   }
@@ -890,6 +909,12 @@ button:disabled {
 
   .editor-view {
     padding-bottom: 24px;
+  }
+
+  .editor-stage {
+    zoom: 1;
+    width: 100%;
+    transform: none;
   }
 
   .ocr-cloud-config {

@@ -29,80 +29,82 @@ export const appTemplate = `
   </section>
 
   <section class="editor-view hidden" id="editorView">
-    <button class="back-home" onclick="goHome()">返回主页</button>
+    <div class="editor-stage">
+      <button class="back-home" onclick="goHome()">返回主页</button>
 
-    <div class="class-selector">
-      <select id="classSelect" onchange="loadClass()">
-        <option value="">选择班级...</option>
-      </select>
-      <div class="time-toggle">
-        <button onclick="toggleTime('weekday')" id="weekdayBtn" class="active">周中</button>
-        <button onclick="toggleTime('weekend')" id="weekendBtn">周末</button>
-      </div>
-      <button class="delete-btn" onclick="deleteCurrentClass()">删除</button>
-    </div>
-
-    <div class="main-content">
-      <div class="left-section">
-        <div class="header">
-          <input type="text" id="headerClassName" value="J328" placeholder="XXXX" maxlength="8" />班座位表
+      <div class="class-selector">
+        <select id="classSelect" onchange="loadClass()">
+          <option value="">选择班级...</option>
+        </select>
+        <div class="time-toggle">
+          <button onclick="toggleTime('weekday')" id="weekdayBtn" class="active">周中</button>
+          <button onclick="toggleTime('weekend')" id="weekendBtn">周末</button>
         </div>
-        <div class="info-section">
-          <div class="time-display">
-            <span class="emoji">⏰</span>
-            <input type="text" class="info-input" id="date" placeholder="月" />月
-            <input type="text" class="info-input" id="day" placeholder="日" />日
-            <select class="weekday-select" id="weekday">
-              <option value="">选择星期</option>
-              <option value="星期一">星期一</option>
-              <option value="星期二">星期二</option>
-              <option value="星期三">星期三</option>
-              <option value="星期四">星期四</option>
-              <option value="星期五">星期五</option>
-              <option value="星期六">星期六</option>
-              <option value="星期日">星期日</option>
-            </select>
-            <input type="text" class="info-input wider" id="time" placeholder="时间" />
-          </div>
-          <div class="location-display">
-            <span class="emoji">🏫</span>
-            <select class="campus-select" id="campus">
-              <option value="">选择校区</option>
-              <option value="C86校区">C86校区</option>
-              <option value="七彩校区">七彩校区</option>
-            </select>
-            <input type="text" class="info-input" id="floor" placeholder="楼" />楼
-            <input type="text" class="info-input wider" id="room" placeholder="教室" />
-          </div>
-        </div>
-        <div class="screen-banner">屏幕 & 白板</div>
-        <div class="classroom" id="classroom"></div>
+        <button class="delete-btn" onclick="deleteCurrentClass()">删除</button>
       </div>
 
-      <div class="right-section">
-        <div class="notes-section">
-          <div class="notes-toolbar">
-            <select id="noteFontSize">
-              <option value="12">12px</option>
-              <option value="14">14px</option>
-              <option value="16" selected>16px</option>
-              <option value="18">18px</option>
-              <option value="20">20px</option>
-              <option value="24">24px</option>
-            </select>
-            <input type="color" id="noteColor" value="#000000" />
-            <div class="text-align-group">
-              <button onclick="setTextAlign('left')" title="左对齐"><i>⬅️</i></button>
-              <button onclick="setTextAlign('center')" title="居中对齐"><i>⬆️</i></button>
-              <button onclick="setTextAlign('right')" title="右对齐"><i>➡️</i></button>
+      <div class="main-content">
+        <div class="left-section">
+          <div class="header">
+            <input type="text" id="headerClassName" value="J328" placeholder="XXXX" maxlength="8" />班座位表
+          </div>
+          <div class="info-section">
+            <div class="time-display">
+              <span class="emoji">⏰</span>
+              <input type="text" class="info-input" id="date" placeholder="月" />月
+              <input type="text" class="info-input" id="day" placeholder="日" />日
+              <select class="weekday-select" id="weekday">
+                <option value="">选择星期</option>
+                <option value="星期一">星期一</option>
+                <option value="星期二">星期二</option>
+                <option value="星期三">星期三</option>
+                <option value="星期四">星期四</option>
+                <option value="星期五">星期五</option>
+                <option value="星期六">星期六</option>
+                <option value="星期日">星期日</option>
+              </select>
+              <input type="text" class="info-input wider" id="time" placeholder="时间" />
             </div>
-            <div class="text-align-group">
-              <button onclick="setVerticalAlign('top')" title="顶部对齐"><i>⬆️</i></button>
-              <button onclick="setVerticalAlign('middle')" title="垂直居中"><i>↕️</i></button>
-              <button onclick="setVerticalAlign('bottom')" title="底部对齐"><i>⬇️</i></button>
+            <div class="location-display">
+              <span class="emoji">🏫</span>
+              <select class="campus-select" id="campus">
+                <option value="">选择校区</option>
+                <option value="C86校区">C86校区</option>
+                <option value="七彩校区">七彩校区</option>
+              </select>
+              <input type="text" class="info-input" id="floor" placeholder="楼" />楼
+              <input type="text" class="info-input wider" id="room" placeholder="教室" />
             </div>
           </div>
-          <div class="notes-content" id="notes" contenteditable="true" placeholder="在此添加备注内容..."></div>
+          <div class="screen-banner">屏幕 & 白板</div>
+          <div class="classroom" id="classroom"></div>
+        </div>
+
+        <div class="right-section">
+          <div class="notes-section">
+            <div class="notes-toolbar">
+              <select id="noteFontSize">
+                <option value="12">12px</option>
+                <option value="14">14px</option>
+                <option value="16" selected>16px</option>
+                <option value="18">18px</option>
+                <option value="20">20px</option>
+                <option value="24">24px</option>
+              </select>
+              <input type="color" id="noteColor" value="#000000" />
+              <div class="text-align-group">
+                <button onclick="setTextAlign('left')" title="左对齐"><i>⬅️</i></button>
+                <button onclick="setTextAlign('center')" title="居中对齐"><i>⬆️</i></button>
+                <button onclick="setTextAlign('right')" title="右对齐"><i>➡️</i></button>
+              </div>
+              <div class="text-align-group">
+                <button onclick="setVerticalAlign('top')" title="顶部对齐"><i>⬆️</i></button>
+                <button onclick="setVerticalAlign('middle')" title="垂直居中"><i>↕️</i></button>
+                <button onclick="setVerticalAlign('bottom')" title="底部对齐"><i>⬇️</i></button>
+              </div>
+            </div>
+            <div class="notes-content" id="notes" contenteditable="true" placeholder="在此添加备注内容..."></div>
+          </div>
         </div>
       </div>
     </div>

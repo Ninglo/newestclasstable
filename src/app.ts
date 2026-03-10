@@ -861,9 +861,12 @@ const groupsToText = (layout: LayoutType, groups: string[][]): string => {
 
   const lines: string[] = [];
   groups.forEach((group, index) => {
-    const names = group.filter(Boolean);
-    if (names.length > 0) {
-      lines.push(`Group ${index + 1}: ${names.join(', ')}`);
+    const normalized = [...group, ...Array(Math.max(0, 6 - group.length)).fill('')].slice(0, 6);
+    if (normalized.some(Boolean)) {
+      const firstRow = normalized.slice(0, 2).map((name) => name || '_').join(', ');
+      const secondRow = normalized.slice(2, 4).map((name) => name || '_').join(', ');
+      const thirdRow = normalized.slice(4, 6).map((name) => name || '_').join(', ');
+      lines.push(`Group ${index + 1}: ${firstRow} | ${secondRow} | ${thirdRow}`);
     }
   });
   return lines.join('\n');
@@ -904,6 +907,21 @@ const parseGroupsText = (layout: LayoutType, text: string): string[][] => {
     const match = line.match(/Group\s*(\d+)\s*:/i);
     if (match) {
       const groupIndex = Math.max(0, Math.min(5, Number.parseInt(match[1], 10) - 1));
+      const body = line.substring(line.indexOf(':') + 1).trim();
+      if (body.includes('|')) {
+        const seats = body
+          .split('|')
+          .flatMap((row) =>
+            row
+              .split(/[,，]/)
+              .map((name) => name.trim())
+              .map((name) => (name === '_' ? '' : name))
+          )
+          .slice(0, 6);
+        groups[groupIndex] = [...seats, ...Array(Math.max(0, 6 - seats.length)).fill('')].slice(0, 6);
+        return;
+      }
+
       groups[groupIndex] = line
         .substring(line.indexOf(':') + 1)
         .split(/[,，]/)
