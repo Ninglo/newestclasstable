@@ -29,7 +29,7 @@ import {
   rotateRowsLayoutForWeek
 } from './layouts';
 import { recognizeClassFromImage, type OCRClassDraft } from './ocr';
-import { loadOCRSettings, saveOCRSettings } from './ocrSettings';
+import { getDefaultOCREndpoint, loadOCRSettings, saveOCRSettings } from './ocrSettings';
 import { refreshSeating, renderModePreview } from './render';
 import {
   createInitialState,
@@ -73,6 +73,17 @@ interface OCRDraftView {
   fullDate: string;
 }
 
+interface BackupPayload {
+  exportedAt: string;
+  sourceOrigin: string;
+  classData: ClassData;
+  userProfile: {
+    username: string;
+    theme: string;
+  };
+  batchUndo: ClassData | null;
+}
+
 type ManualSeatRef =
   | { key: string; label: string; kind: 'circular'; groupIndex: number; seatIndex: number }
   | { key: string; label: string; kind: 'rows'; rowIndex: number; side: 'left' | 'right'; seatIndex: number }
@@ -91,6 +102,15 @@ const state = createInitialState();
 let ocrDrafts: OCRDraftView[] = [];
 let ocrSettings: OCRSettings = loadOCRSettings();
 let manualTuneDraft: ManualTuneDraft | null = null;
+const usageGuideStorageKey = 'classSeatingUsageGuideDismissed';
+
+const getLaunchClassName = (): string => {
+  try {
+    return new URLSearchParams(window.location.search).get('class')?.trim() || '';
+  } catch {
+    return '';
+  }
+};
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -171,6 +191,23 @@ const updateWelcome = (): void => {
   byId<HTMLHeadingElement>('welcomeText').textContent = `Welcome ${state.userProfile.username}!`;
   byId<HTMLParagraphElement>('todayText').textContent = `今天是 ${formatTodayLabel()}，第${week}周，${getChineseWeekday()}`;
   byId<HTMLInputElement>('usernameInput').value = state.userProfile.username;
+};
+
+const setUsageGuideVisible = (visible: boolean): void => {
+  byId<HTMLDivElement>('homeView')
+    .querySelector<HTMLElement>('.usage-guide')
+    ?.classList.toggle('hidden', !visible);
+  byId<HTMLButtonElement>('usageGuideToggleBtn').textContent = visible ? '隐藏使用说明' : '查看使用说明';
+  window.localStorage.setItem(usageGuideStorageKey, visible ? '0' : '1');
+};
+
+const initializeUsageGuide = (): void => {
+  setUsageGuideVisible(window.localStorage.getItem(usageGuideStorageKey) !== '1');
+};
+
+const toggleUsageGuide = (): void => {
+  const guide = byId<HTMLDivElement>('homeView').querySelector<HTMLElement>('.usage-guide');
+  setUsageGuideVisible(guide?.classList.contains('hidden') ?? false);
 };
 
 const countStudentsInMode = (mode: ClassConfig[TimeMode]): number => {
@@ -260,6 +297,25 @@ const renderClassOverview = (): void => {
   container.innerHTML = cards;
   updateBatchUndoButton();
   updateSyncModeButton();
+};
+
+const applyLaunchClass = (): void => {
+  const launchClass = getLaunchClassName();
+  if (!launchClass) {
+    return;
+  }
+
+  if (state.classData[launchClass]) {
+    openClassInEditor(launchClass);
+    return;
+  }
+
+  headerClassName().value = launchClass;
+  const homeClassList = byId<HTMLDivElement>('homeClassList');
+  const hint = document.createElement('div');
+  hint.className = 'class-card empty';
+  hint.textContent = `已从 Amber 打开班级 ${launchClass}，当前座位表里还没有这班的数据。可直接新建或导入。`;
+  homeClassList.prepend(hint);
 };
 
 const updateBatchUndoButton = (): void => {
@@ -398,6 +454,91 @@ const sanitizeClassDataMap = (loaded: ClassData): ClassData => {
   });
 
   return sanitized;
+};
+
+const sanitizeImportedTheme = (theme: string | undefined): ThemeName => {
+  if (theme === 'classic'
+    || theme === 'mint'
+    || theme === 'rose'
+    || theme === 'apricot'
+    || theme === 'golden'
+    || theme === 'plum'
+    || theme === 'paper') {
+    return theme;
+  }
+  return 'paper';
+};
+
+const buildBackupPayload = (): BackupPayload => ({
+  exportedAt: new Date().toISOString(),
+  sourceOrigin: window.location.origin,
+  classData: deepCopy(state.classData),
+  userProfile: {
+    username: state.userProfile.username,
+    theme: state.userProfile.theme
+  },
+  batchUndo: deepCopy(loadBatchUndoData())
+});
+
+const exportDataBackup = (): void => {
+  const payload = buildBackupPayload();
+  const stamp = payload.exportedAt.slice(0, 19).replace(/[:T]/g, '-');
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `classsitdown-backup-${stamp}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const applyImportedBackup = (payload: Partial<BackupPayload>): void => {
+  state.userProfile = {
+    username: typeof payload.userProfile?.username === 'string' ? payload.userProfile.username.trim() : '',
+    theme: sanitizeImportedTheme(payload.userProfile?.theme)
+  };
+  saveProfile();
+  applyTheme(state.userProfile.theme);
+  updateWelcome();
+
+  state.classData = sanitizeClassDataMap(
+    payload.classData && typeof payload.classData === 'object'
+      ? payload.classData as ClassData
+      : {}
+  );
+  persist();
+
+  if (payload.batchUndo && typeof payload.batchUndo === 'object') {
+    saveBatchUndoData(sanitizeClassDataMap(payload.batchUndo as ClassData));
+  } else {
+    clearBatchUndoData();
+  }
+
+  updateClassSelect();
+  renderClassOverview();
+  setCurrentView('home');
+};
+
+const importBackupFile = async (event: Event): Promise<void> => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  try {
+    const payload = JSON.parse(await file.text()) as Partial<BackupPayload>;
+    applyImportedBackup(payload);
+    window.alert('备份导入成功，当前页面已切回主页。');
+  } catch {
+    window.alert('备份文件读取失败，请确认选择的是导出的 JSON 备份。');
+  } finally {
+    input.value = '';
+  }
+};
+
+const triggerImportBackup = (): void => {
+  byId<HTMLInputElement>('backupImportInput').click();
 };
 
 const loadSavedData = (): void => {
@@ -1395,7 +1536,7 @@ const readOcrSettingsFromForm = (): OCRSettings => {
   const settings: OCRSettings = {
     engine: engine === 'local' || engine === 'tencent' || engine === 'hybrid' ? engine : 'hybrid',
     allowLocalFallback: byId<HTMLInputElement>('allowLocalFallback').checked,
-    tencentEndpoint: byId<HTMLInputElement>('tencentEndpoint').value.trim().replace(/\/$/, '') || 'http://127.0.0.1:8787',
+    tencentEndpoint: byId<HTMLInputElement>('tencentEndpoint').value.trim().replace(/\/$/, '') || getDefaultOCREndpoint(),
     tencentRegion: byId<HTMLInputElement>('tencentRegion').value.trim() || 'ap-guangzhou',
     tencentAction: byId<HTMLSelectElement>('tencentAction').value as OCRSettings['tencentAction']
   };
@@ -2437,6 +2578,9 @@ const bindCoreEvents = (): void => {
   byId<HTMLInputElement>('circularLayout').addEventListener('change', updateLayoutDescription);
   byId<HTMLInputElement>('rowsLayout').addEventListener('change', updateLayoutDescription);
   byId<HTMLInputElement>('arcLayout').addEventListener('change', updateLayoutDescription);
+  byId<HTMLInputElement>('backupImportInput').addEventListener('change', (event) => {
+    void importBackupFile(event);
+  });
   byId<HTMLSelectElement>('ocrEngine').addEventListener('change', () => {
     updateOcrProviderFields();
     readOcrSettingsFromForm();
@@ -2495,6 +2639,9 @@ interface AppWindow extends Window {
   restorePreviousWeek: () => void;
   showRosterDialog: () => void;
   hideRosterDialog: () => void;
+  exportDataBackup: () => void;
+  triggerImportBackup: () => void;
+  toggleUsageGuide: () => void;
 }
 
 const exposeToWindow = (): void => {
@@ -2538,6 +2685,9 @@ const exposeToWindow = (): void => {
   w.restorePreviousWeek = restorePreviousWeek;
   w.showRosterDialog = showRosterDialog;
   w.hideRosterDialog = hideRosterDialog;
+  w.exportDataBackup = exportDataBackup;
+  w.triggerImportBackup = triggerImportBackup;
+  w.toggleUsageGuide = toggleUsageGuide;
 };
 
 const loadProfile = (): void => {
@@ -2555,10 +2705,12 @@ export const initApp = (): void => {
   bindNotes();
   bindOcrReviewEvents();
   bindHomeEvents();
+  initializeUsageGuide();
   updateLayoutDescription();
   updateTime();
   setInterval(updateTime, 60000);
   refresh();
   renderClassOverview();
   setCurrentView('home');
+  applyLaunchClass();
 };

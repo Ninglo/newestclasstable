@@ -30,6 +30,10 @@ export const appTemplate = `
       <button class="primary" id="generateWeekBtn" onclick="generateWeeklySeating()">生成第<span id="homeWeekNum">1</span>周座位表</button>
       <button id="undoWeekBtn" onclick="undoWeeklySeating()">撤回上次周轮转</button>
       <button id="newClassBtn" onclick="showCreateClassDialog()">新建班级座位表</button>
+      <button id="exportBackupBtn" onclick="exportDataBackup()">导出备份</button>
+      <button id="importBackupBtn" onclick="triggerImportBackup()">导入备份</button>
+      <button id="usageGuideToggleBtn" onclick="toggleUsageGuide()">隐藏使用说明</button>
+      <input id="backupImportInput" type="file" accept=".json,application/json" hidden />
     </section>
 
     <section class="usage-guide" aria-labelledby="usageGuideTitle">
@@ -38,7 +42,10 @@ export const appTemplate = `
           <p class="usage-guide-eyebrow">使用说明</p>
           <h2 id="usageGuideTitle">第一次打开先看这里</h2>
         </div>
-        <p class="usage-guide-note">这是一套静态网页工具，上传到公司网站后即可直接访问。</p>
+        <div class="usage-guide-header-actions">
+          <p class="usage-guide-note">这是一套静态网页工具，上传到公司网站后即可直接访问。</p>
+          <button type="button" class="usage-guide-close" onclick="toggleUsageGuide()">收起</button>
+        </div>
       </div>
       <div class="usage-guide-grid">
         <article class="usage-card">
