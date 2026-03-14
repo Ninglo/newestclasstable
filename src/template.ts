@@ -143,7 +143,18 @@ export const appTemplate = `
                 <option value="星期六">星期六</option>
                 <option value="星期日">星期日</option>
               </select>
-              <input type="text" class="info-input wider" id="time" placeholder="时间" />
+              <input type="text" class="info-input wider" id="time" list="timeOptions" placeholder="选择或输入时间" />
+              <datalist id="timeOptions">
+                <option value="10:10"></option>
+                <option value="11:20"></option>
+                <option value="12:30"></option>
+                <option value="13:40"></option>
+                <option value="14:50"></option>
+                <option value="16:00"></option>
+                <option value="17:10"></option>
+                <option value="18:20"></option>
+                <option value="19:30"></option>
+              </datalist>
             </div>
             <div class="location-display">
               <span class="emoji">🏫</span>
@@ -207,9 +218,6 @@ export const appTemplate = `
       <button onclick="showPreviousWeekDialog()">看看上周座位</button>
       <button onclick="showRosterDialog()">完整名单</button>
       <button id="syncOtherModeBtn" onclick="copyCurrentToOtherMode()">同步到另一时段</button>
-      <div class="edit-mode">
-        <button onclick="toggleEditMode()">编辑模式</button>
-      </div>
       <button onclick="toggleLayout()">切换布局</button>
       <button onclick="generateSeating()">手动轮转</button>
     </div>
@@ -248,9 +256,9 @@ export const appTemplate = `
         <input type="radio" name="layout" value="rows" id="rowsLayout" />
         <label for="rowsLayout">三横排布局</label>
       </div>
-      <div class="layout-option">
+      <div class="layout-option" hidden>
         <input type="radio" name="layout" value="arc" id="arcLayout" />
-        <label for="arcLayout">圆弧布局（两横排）</label>
+        <label for="arcLayout">两横排布局</label>
       </div>
     </div>
     <p>请输入学生名单（每行一个名字）：</p>
@@ -258,7 +266,6 @@ export const appTemplate = `
       <ul style="font-size: 14px; color: #666; margin: 10px 0;">
         <li>圆桌：31-36人=6组，25-30人=5组，19-24人=4组，1-18人=3组</li>
         <li>三横排：31-36人=6组，25-30人=5组，1-24人=4组</li>
-        <li>圆弧：两排布局，最多36人</li>
       </ul>
     </div>
     <textarea id="studentNames" placeholder="请输入学生名字，每行一个..."></textarea>
@@ -318,7 +325,7 @@ export const appTemplate = `
 
   <div class="dialog" id="manualTuneDialog">
     <h2>手动微调</h2>
-    <p class="manual-tips">提示：先点一个座位，再点另一个座位可直接换位；也可以直接改名字，或新增学生后放进空位。</p>
+    <p class="manual-tips">提示：直接在真实座位图里操作。先点一个座位，再点另一个座位可互换；直接改输入框可改名；新增学生后会自动进入空位。</p>
     <div class="manual-row">
       <label for="manualGroupCount">组数</label>
       <input type="number" id="manualGroupCount" min="1" max="6" value="6" />
@@ -329,6 +336,7 @@ export const appTemplate = `
       <input type="text" id="manualNewStudent" placeholder="输入新学生名字" />
       <button type="button" onclick="addManualTuneStudent()">加入空位</button>
     </div>
+    <div id="manualTuneStatus" class="manual-status">换位模式：先点一个座位，再点另一个座位完成交换。</div>
     <div id="manualSeatEditor" class="manual-seat-editor"></div>
     <div id="manualTuneError" class="error"></div>
     <div class="buttons">

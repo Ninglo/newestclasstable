@@ -12,11 +12,11 @@ import {
   collectStudentsFromArc,
   collectStudentsFromCircular,
   collectStudentsFromRows,
-  convertStudentsToArc,
   convertStudentsToCircular,
   convertStudentsToRows,
   getCircularGroupCount,
   getCircularGroupCountFromGroups,
+  getCircularSlotMap,
   getRowGroupCount,
   getRowsGroupCountFromGroups,
   getRowsSlotMap,
@@ -233,18 +233,16 @@ const updateSyncModeButton = (): void => {
   }
 
   const currentMode = state.classData[className][state.currentTimeMode];
-  const otherMode = state.classData[className][targetMode];
   const currentCount = countStudentsInMode(currentMode);
-  const targetCount = countStudentsInMode(otherMode);
 
   button.textContent = `同步到${targetLabel}`;
-  button.disabled = currentCount === 0 || targetCount > 0;
-  button.title = targetCount > 0 ? `${targetLabel}已有名单，避免覆盖，当前不允许直接同步。` : '';
+  button.disabled = currentCount === 0;
+  button.title = currentCount === 0 ? '当前时段还没有可同步的名单。' : `将当前学生名单和座位顺序同步到${targetLabel}。`;
 };
 
 const layoutLabel = (layout: LayoutType): string => {
   if (layout === 'rows') return '三横排';
-  if (layout === 'arc') return '圆弧';
+  if (layout === 'arc') return '两横排';
   return '圆桌';
 };
 
@@ -736,8 +734,8 @@ const copyCurrentToOtherMode = (): void => {
     return;
   }
 
-  if (countStudentsInMode(targetModeData) > 0) {
-    alert(`${targetLabel}已经有名单了，为避免覆盖，当前不允许直接同步。`);
+  const shouldSync = window.confirm(`是否同步所有学生及座位顺序到${targetLabel}？\n\n这会覆盖${targetLabel}当前的座位布局与学生顺序，但保留${targetLabel}原本的日期、时间、校区和备注信息。`);
+  if (!shouldSync) {
     return;
   }
 
@@ -747,13 +745,13 @@ const copyCurrentToOtherMode = (): void => {
     groupOrder: currentModeData.layout === 'circular' ? [...(currentModeData.groupOrder || [1, 2, 3, 4, 5, 6])] : null,
     rowGroups: currentModeData.layout === 'rows' ? deepCopy(currentModeData.rowGroups) : null,
     arcGroups: currentModeData.layout === 'arc' ? deepCopy(currentModeData.arcGroups) : null,
-    currentArrangement: 0,
-    locationInfo: makeEmptyLocationInfo()
+    currentArrangement: currentModeData.currentArrangement,
+    locationInfo: deepCopy(targetModeData.locationInfo || makeEmptyLocationInfo())
   };
 
   persist();
   updateSyncModeButton();
-  alert(`已把当前座位和名单同步到${targetLabel}，日期和场地信息保持空白。`);
+  alert(`已把当前学生名单和座位顺序同步到${targetLabel}。`);
 };
 
 const showSaveDialog = (): void => {
@@ -989,7 +987,7 @@ const importArcLayout = (input: string): void => {
     return;
   }
   if (total > 36) {
-    showError(`圆弧布局最多36人，当前${total}人`);
+    showError(`两横排布局最多36人，当前${total}人`);
     return;
   }
 
@@ -1003,7 +1001,7 @@ const importArcLayout = (input: string): void => {
   state.currentArrangement = 0;
   setLayoutClass('arc');
 
-  saveAndRefresh(`成功导入圆弧布局，共${total}人`);
+  saveAndRefresh(`成功导入两横排布局，共${total}人`);
 };
 
 const importStudents = (): void => {
@@ -1258,8 +1256,7 @@ const toggleLayout = (): void => {
         ? collectStudentsFromRows(state.rowGroups)
         : collectStudentsFromArc(state.arcGroups);
 
-  const nextLayout: LayoutType =
-    state.currentLayout === 'circular' ? 'rows' : state.currentLayout === 'rows' ? 'arc' : 'circular';
+  const nextLayout: LayoutType = state.currentLayout === 'circular' ? 'rows' : 'circular';
 
   if (currentStudents.length > layoutMaxStudents(nextLayout)) {
     alert(`当前人数超出${nextLayout}布局上限`);
@@ -1279,11 +1276,6 @@ const toggleLayout = (): void => {
     state.groups = makeEmptyCircularGroups();
     state.currentGroupOrder = [1, 2, 3, 4, 5, 6];
     state.arcGroups = makeEmptyArcGroups();
-  } else {
-    state.arcGroups = convertStudentsToArc(currentStudents);
-    state.groups = makeEmptyCircularGroups();
-    state.currentGroupOrder = [1, 2, 3, 4, 5, 6];
-    state.rowGroups = makeEmptyRowGroups();
   }
 
   setLayoutClass(nextLayout);
@@ -1315,8 +1307,8 @@ const updateLayoutDescription = (): void => {
 
   layoutDesc.innerHTML = `
     <ul style="font-size: 14px; color: #666; margin: 10px 0;">
-      <li>圆弧布局：两排，每排最多18人</li>
-      <li>支持第一排/第二排导入</li>
+      <li>两横排布局：前排与后排，每排最多18人</li>
+      <li>支持按“第一排 / 第二排”直接导入</li>
     </ul>
   `;
 };
@@ -1482,7 +1474,6 @@ const renderOcrReview = (): void => {
               <select data-field="layout">
                 <option value="circular" ${draft.layout === 'circular' ? 'selected' : ''}>圆桌</option>
                 <option value="rows" ${draft.layout === 'rows' ? 'selected' : ''}>三横排</option>
-                <option value="arc" ${draft.layout === 'arc' ? 'selected' : ''}>两横排</option>
               </select>
             </label>
             <label>覆盖同名班级
@@ -1907,27 +1898,150 @@ const findManualSeat = (draft: ManualTuneDraft, key: string): ManualSeatRef | nu
   return null;
 };
 
+const manualSeatSummary = (seat: ManualSeatRef): string => {
+  if (seat.kind === 'circular') {
+    return `第${seat.groupIndex + 1}组 · 位置${seat.seatIndex + 1}`;
+  }
+  if (seat.kind === 'rows') {
+    return `第${seat.rowIndex + 1}排${seat.side === 'left' ? '左' : '右'}侧 · 位置${seat.seatIndex + 1}`;
+  }
+  return `${seat.rowIndex === 0 ? '前排' : '后排'} · 位置${seat.seatIndex + 1}`;
+};
+
+const updateManualTuneStatus = (): void => {
+  const status = byId<HTMLDivElement>('manualTuneStatus');
+  if (!manualTuneDraft?.selectedSeatKey) {
+    status.textContent = '换位模式：先点一个座位，再点另一个座位完成交换。';
+    status.classList.remove('is-selected');
+    return;
+  }
+
+  const seat = findManualSeat(manualTuneDraft, manualTuneDraft.selectedSeatKey);
+  status.textContent = seat
+    ? `已选中 ${manualSeatSummary(seat)}，现在再点一个目标座位完成互换。`
+    : '换位模式：先点一个座位，再点另一个座位完成交换。';
+  status.classList.toggle('is-selected', Boolean(seat));
+};
+
 const renderManualTuneEditor = (): void => {
   const container = byId<HTMLDivElement>('manualSeatEditor');
   if (!manualTuneDraft) {
     container.innerHTML = '';
     return;
   }
+  const draft = manualTuneDraft;
 
-  const sections = buildManualSeatSections(manualTuneDraft);
-  container.innerHTML = sections
-    .map((section) => `
-      <section class="manual-seat-group">
-        <h3>${escapeHtml(section.title)}</h3>
-        ${section.seats.map((seat) => `
-          <div class="manual-seat-row${manualTuneDraft?.selectedSeatKey === seat.key ? ' selected' : ''}" data-seat-key="${seat.key}">
-            <span class="manual-seat-label">${escapeHtml(seat.label)}</span>
-            <input data-seat-input="${seat.key}" value="${escapeHtml(getManualSeatValue(manualTuneDraft!, seat))}" />
+  const renderSeat = (seat: ManualSeatRef, label: string): string => `
+    <div class="seat manual-seat${draft.selectedSeatKey === seat.key ? ' selected' : ''}" data-seat-key="${seat.key}">
+      <span class="manual-seat-label">${escapeHtml(label)}</span>
+      <input data-seat-input="${seat.key}" value="${escapeHtml(getManualSeatValue(draft, seat))}" />
+    </div>
+  `;
+
+  if (draft.layout === 'circular') {
+    const activeGroupCount = getCircularGroupCountFromGroups(draft.groups);
+    const slotMap = getCircularSlotMap(activeGroupCount);
+    container.innerHTML = `
+      <div class="manual-layout classroom">
+        ${Array.from({ length: 6 }, (_, slotIndex) => {
+          const logicalGroupIndex = slotMap[slotIndex];
+          if (logicalGroupIndex === null) {
+            return `
+              <div class="table table-empty manual-table-empty">
+                <h3>空组</h3>
+                <div class="seats seats-empty"></div>
+              </div>
+            `;
+          }
+          return `
+            <div class="table group-${(logicalGroupIndex % 6) + 1}">
+              <h3>Group ${logicalGroupIndex + 1}</h3>
+              <div class="seats">
+                ${draft.groups[logicalGroupIndex].map((_, seatIndex) => renderSeat({
+                  key: `g-${logicalGroupIndex}-${seatIndex}`,
+                  label: `位置 ${seatIndex + 1}`,
+                  kind: 'circular',
+                  groupIndex: logicalGroupIndex,
+                  seatIndex
+                }, `${seatIndex + 1}`)).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    updateManualTuneStatus();
+    return;
+  }
+
+  if (draft.layout === 'rows') {
+    const activeGroupCount = getRowsGroupCountFromGroups(draft.rowGroups);
+    const slotMap = getRowsSlotMap(activeGroupCount);
+    const rows = [
+      { leftSlot: 0, rightSlot: 1 },
+      { leftSlot: 2, rightSlot: 3 },
+      { leftSlot: 4, rightSlot: 5 }
+    ];
+
+    container.innerHTML = `
+      <div class="manual-layout classroom three-rows-layout">
+        ${rows.map((rowMeta, rowIndex) => {
+          const leftGroupIndex = slotMap[rowMeta.leftSlot];
+          const rightGroupIndex = slotMap[rowMeta.rightSlot];
+          const isSingleCenter = rowIndex === 2 && leftGroupIndex !== null && rightGroupIndex === null;
+          const renderGroup = (side: 'left' | 'right', title: string, groupIndex: number | null) => {
+            const seats = draft.rowGroups.rows[rowIndex][side];
+            if (groupIndex === null) {
+              return `<div class="${side === 'left' ? 'group-left' : 'group-right'} manual-group-empty"><h3>空组</h3><div class="seats-row"></div></div>`;
+            }
+            return `
+              <div class="${side === 'left' ? 'group-left' : 'group-right'}${isSingleCenter && side === 'left' ? ' group-center' : ''}">
+                <h3>${escapeHtml(title)}</h3>
+                <div class="seats-row">
+                  ${seats.map((_, seatIndex) => renderSeat({
+                    key: `r-${rowIndex}-${side}-${seatIndex}`,
+                    label: `位置 ${seatIndex + 1}`,
+                    kind: 'rows',
+                    rowIndex,
+                    side,
+                    seatIndex
+                  }, `${seatIndex + 1}`)).join('')}
+                </div>
+              </div>
+            `;
+          };
+          return `
+            <div class="row${isSingleCenter ? ' single-center' : ''}">
+              ${renderGroup('left', leftGroupIndex === null ? '空组' : `Group ${leftGroupIndex + 1}`, leftGroupIndex)}
+              ${isSingleCenter ? '' : renderGroup('right', rightGroupIndex === null ? '空组' : `Group ${rightGroupIndex + 1}`, rightGroupIndex)}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    updateManualTuneStatus();
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="manual-layout classroom arc-layout">
+      ${draft.arcGroups.rows.map((row, rowIndex) => `
+        <div class="arc-row">
+          <h3 class="two-row-title">${rowIndex === 0 ? '前排' : '后排'}</h3>
+          <div class="arc-seats">
+            ${row.map((_, seatIndex) => renderSeat({
+              key: `a-${rowIndex}-${seatIndex}`,
+              label: `位置 ${seatIndex + 1}`,
+              kind: 'arc',
+              rowIndex,
+              seatIndex
+            }, `${seatIndex + 1}`)).join('')}
           </div>
-        `).join('')}
-      </section>
-    `)
-    .join('');
+        </div>
+      `).join('')}
+    </div>
+  `;
+  updateManualTuneStatus();
 };
 
 const showManualTuneDialog = (): void => {

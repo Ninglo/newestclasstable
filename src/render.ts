@@ -183,12 +183,15 @@ const refreshRowSeating = (state: AppState, handlers: RenderHandlers): void => {
 
 const refreshArcSeating = (state: AppState, handlers: RenderHandlers): void => {
   const classroom = asElement<HTMLDivElement>('#classroom');
-  const colors = ['#fff3b0', '#a8d5ff'];
 
   state.arcGroups.rows.forEach((row, rowIndex) => {
     const rowElement = document.createElement('div');
     rowElement.className = 'arc-row';
-    rowElement.style.background = colors[rowIndex % colors.length];
+
+    const title = document.createElement('h3');
+    title.className = 'two-row-title';
+    title.textContent = rowIndex === 0 ? '前排' : '后排';
+    rowElement.appendChild(title);
 
     const seats = document.createElement('div');
     seats.className = 'arc-seats';
@@ -196,25 +199,10 @@ const refreshArcSeating = (state: AppState, handlers: RenderHandlers): void => {
     const maxLength = maxNameLength(row, 1);
     const fontSize = Math.min(16, Math.max(12, Math.floor(140 / maxLength)));
 
-    const n = row.length;
-    const center = (n - 1) / 2;
-    const maxOffset = 20;
-
     for (let i = 0; i < row.length; i += 1) {
       const student = row[i] || '';
       const seat = document.createElement('div');
       seat.className = 'seat arc-seat';
-
-      const distanceFromCenter = Math.abs(i - center);
-      const radius = center;
-      const upwardOffset =
-        distanceFromCenter <= radius
-          ? Math.round(Math.sqrt(radius * radius - distanceFromCenter * distanceFromCenter) * (maxOffset / radius))
-          : 0;
-
-      seat.style.marginBottom = `${upwardOffset}px`;
-      seat.style.display = 'inline-block';
-      seat.style.verticalAlign = 'bottom';
 
       const input = makeInput(student, fontSize, !state.isEditMode);
       input.onchange = () => handlers.handleArcSeatChange(rowIndex, i, input.value);
@@ -338,31 +326,23 @@ const renderPreviewArc = (container: HTMLDivElement, arcGroups: TimeModeData['ar
     return;
   }
 
-  const colors = ['#fff3b0', '#a8d5ff'];
-
   arcGroups.rows.forEach((row, rowIndex) => {
     const rowElement = document.createElement('div');
     rowElement.className = 'arc-row';
-    rowElement.style.background = colors[rowIndex % colors.length];
+
+    const title = document.createElement('h3');
+    title.className = 'two-row-title';
+    title.textContent = rowIndex === 0 ? '前排' : '后排';
+    rowElement.appendChild(title);
 
     const seats = document.createElement('div');
     seats.className = 'arc-seats';
     const maxLength = maxNameLength(row, 1);
     const fontSize = Math.min(16, Math.max(12, Math.floor(140 / maxLength)));
-    const center = (row.length - 1) / 2;
-    const maxOffset = 20;
 
     for (let index = 0; index < row.length; index += 1) {
       const seat = document.createElement('div');
       seat.className = 'seat arc-seat';
-      const distanceFromCenter = Math.abs(index - center);
-      const upwardOffset =
-        distanceFromCenter <= center
-          ? Math.round(Math.sqrt(center * center - distanceFromCenter * distanceFromCenter) * (maxOffset / center))
-          : 0;
-      seat.style.marginBottom = `${upwardOffset}px`;
-      seat.style.display = 'inline-block';
-      seat.style.verticalAlign = 'bottom';
       seat.appendChild(makeInput(row[index] || '', fontSize, true));
       seats.appendChild(seat);
     }
