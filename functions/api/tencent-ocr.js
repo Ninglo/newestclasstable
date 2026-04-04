@@ -1,58 +1,65 @@
-import { createHash, createHmac } from 'node:crypto';
-
 const HOST = 'ocr.tencentcloudapi.com';
 const SERVICE = 'ocr';
 const VERSION = '2018-11-19';
 const AUTO_ACTIONS = ['ExtractDocMulti', 'GeneralAccurateOCR', 'GeneralBasicOCR'];
 
-const SECRET_ID = (process.env.TENCENT_SECRET_ID || '').trim();
-const SECRET_KEY = (process.env.TENCENT_SECRET_KEY || '').trim();
-const DEFAULT_REGION = (process.env.TENCENT_REGION || 'ap-guangzhou').trim();
-const DEFAULT_ACTION = (process.env.TENCENT_DEFAULT_ACTION || 'GeneralAccurateOCR').trim();
-
-const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
-const hmac = (key, msg, encoding) => createHmac('sha256', key).update(msg, 'utf8').digest(encoding);
-
-const cors = {
+const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Allow-Methods': 'POST,OPTIONS',
+  'Content-Type': 'application/json',
 };
 
-const buildAuthorization = ({ payload, timestamp, secretId, secretKey }) => {
+const enc = new TextEncoder();
+
+function toHex(buf) {
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Hex(text) {
+  return toHex(await crypto.subtle.digest('SHA-256', enc.encode(text)));
+}
+
+async function hmacSign(key, msg) {
+  const keyData = typeof key === 'string' ? enc.encode(key) : key;
+  const k = await crypto.subtle.importKey('raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', k, enc.encode(msg)));
+}
+
+async function hmacSignHex(key, msg) {
+  const keyData = typeof key === 'string' ? enc.encode(key) : key;
+  const k = await crypto.subtle.importKey('raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return toHex(await crypto.subtle.sign('HMAC', k, enc.encode(msg)));
+}
+
+async function buildAuthorization({ payload, timestamp, secretId, secretKey }) {
   const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
   const signedHeaders = 'content-type;host';
   const canonicalHeaders = `content-type:application/json; charset=utf-8\nhost:${HOST}\n`;
-  const hashedPayload = sha256(payload);
-  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, hashedPayload].join('\n');
+  const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, await sha256Hex(payload)].join('\n');
   const credentialScope = `${date}/${SERVICE}/tc3_request`;
-  const stringToSign = ['TC3-HMAC-SHA256', String(timestamp), credentialScope, sha256(canonicalRequest)].join('\n');
-  const secretDate = hmac(`TC3${secretKey}`, date);
-  const secretService = hmac(secretDate, SERVICE);
-  const secretSigning = hmac(secretService, 'tc3_request');
-  const signature = hmac(secretSigning, stringToSign, 'hex');
+  const stringToSign = ['TC3-HMAC-SHA256', String(timestamp), credentialScope, await sha256Hex(canonicalRequest)].join('\n');
+  const secretDate = await hmacSign(`TC3${secretKey}`, date);
+  const secretService = await hmacSign(secretDate, SERVICE);
+  const secretSigning = await hmacSign(secretService, 'tc3_request');
+  const signature = await hmacSignHex(secretSigning, stringToSign);
   return `TC3-HMAC-SHA256 Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-};
+}
 
 const parsePolygon = (polygon) => {
   if (!Array.isArray(polygon) || polygon.length === 0) return null;
-  const points = polygon
-    .map((p) => ({ x: Number(p?.X), y: Number(p?.Y) }))
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  const points = polygon.map(p => ({ x: Number(p?.X), y: Number(p?.Y) })).filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
   if (points.length === 0) return null;
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
+  const xs = points.map(p => p.x), ys = points.map(p => p.y);
   return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
 };
 
 const parseQuad = (coord) => {
   if (!coord) return null;
   const points = [coord.LeftTop, coord.RightTop, coord.RightBottom, coord.LeftBottom]
-    .map((p) => ({ x: Number(p?.X), y: Number(p?.Y) }))
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    .map(p => ({ x: Number(p?.X), y: Number(p?.Y) })).filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
   if (points.length === 0) return null;
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
+  const xs = points.map(p => p.x), ys = points.map(p => p.y);
   return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
 };
 
@@ -64,7 +71,7 @@ const parseItemPolygon = (ip) => {
 };
 
 const splitTextTokens = (text) =>
-  String(text || '').split(/[,\s，。;；:：、|｜/\\]+/).map((s) => s.trim()).filter(Boolean);
+  String(text || '').split(/[,\s，。;；:：、|｜/\\]+/).map(s => s.trim()).filter(Boolean);
 
 const normalizeTextDetection = (d) => {
   const text = String(d?.DetectedText || '').trim();
@@ -121,10 +128,10 @@ const buildPayload = (action, imageBase64) => {
   return { ImageBase64: imageBase64 };
 };
 
-const callTencentAPI = async ({ action, region, imageBase64 }) => {
+async function callTencentAPI({ action, region, imageBase64, secretId, secretKey }) {
   const payload = JSON.stringify(buildPayload(action, imageBase64));
   const timestamp = Math.floor(Date.now() / 1000);
-  const authorization = buildAuthorization({ payload, timestamp, secretId: SECRET_ID, secretKey: SECRET_KEY });
+  const authorization = await buildAuthorization({ payload, timestamp, secretId, secretKey });
   const response = await fetch(`https://${HOST}/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8', Host: HOST, Authorization: authorization, 'X-TC-Action': action, 'X-TC-Version': VERSION, 'X-TC-Region': region, 'X-TC-Timestamp': String(timestamp) },
@@ -137,19 +144,31 @@ const callTencentAPI = async ({ action, region, imageBase64 }) => {
   const textDetections = data?.Response?.TextDetections || [];
   const wordList = data?.Response?.WordList || [];
   const words = textDetections.length > 0 ? normalizeWords(textDetections) : normalizeWordList(wordList);
-  const rawText = (textDetections.length > 0 ? textDetections : wordList).map((i) => String(i?.DetectedText || '').trim()).filter(Boolean).join('\n');
+  const rawText = (textDetections.length > 0 ? textDetections : wordList).map(i => String(i?.DetectedText || '').trim()).filter(Boolean).join('\n');
   return { provider: 'tencent', action, requestId: data?.Response?.RequestId || '', rawText, words };
-};
+}
 
-export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') return res.status(200).setHeader('Access-Control-Allow-Origin', '*').setHeader('Access-Control-Allow-Headers', 'Content-Type').setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS').end();
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), { status, headers: corsHeaders });
+}
 
-  if (req.method !== 'POST') return res.status(404).json({ error: 'Not Found' });
+export async function onRequestOptions() {
+  return new Response(null, { headers: corsHeaders });
+}
 
-  if (!SECRET_ID || !SECRET_KEY) return res.status(500).json({ ...cors, error: 'TENCENT_SECRET_ID / TENCENT_SECRET_KEY 未配置。' });
+export async function onRequestPost(context) {
+  const SECRET_ID = (context.env.TENCENT_SECRET_ID || '').trim();
+  const SECRET_KEY = (context.env.TENCENT_SECRET_KEY || '').trim();
+  const DEFAULT_REGION = (context.env.TENCENT_REGION || 'ap-guangzhou').trim();
+  const DEFAULT_ACTION = (context.env.TENCENT_DEFAULT_ACTION || 'GeneralAccurateOCR').trim();
 
-  const { imageBase64, action: reqAction, region: reqRegion } = req.body || {};
-  if (!imageBase64) return res.status(400).json({ error: '缺少 imageBase64' });
+  if (!SECRET_ID || !SECRET_KEY) return jsonResponse({ error: 'TENCENT_SECRET_ID / TENCENT_SECRET_KEY 未配置。' }, 500);
+
+  let body;
+  try { body = await context.request.json(); } catch { return jsonResponse({ error: '请求体 JSON 解析失败' }, 400); }
+
+  const { imageBase64, action: reqAction, region: reqRegion } = body || {};
+  if (!imageBase64) return jsonResponse({ error: '缺少 imageBase64' }, 400);
 
   const action = String(reqAction || DEFAULT_ACTION || 'GeneralAccurateOCR').trim();
   const region = String(reqRegion || DEFAULT_REGION || 'ap-guangzhou').trim();
@@ -159,12 +178,12 @@ export default async function handler(req, res) {
   let lastError = null;
   for (const currentAction of uniqueActions) {
     try {
-      const result = await callTencentAPI({ action: currentAction, region, imageBase64 });
-      return res.status(200).json(result);
+      const result = await callTencentAPI({ action: currentAction, region, imageBase64, secretId: SECRET_ID, secretKey: SECRET_KEY });
+      return jsonResponse(result);
     } catch (error) {
       lastError = error;
     }
   }
 
-  return res.status(502).json({ error: lastError instanceof Error ? lastError.message : '腾讯 OCR 调用失败' });
+  return jsonResponse({ error: lastError instanceof Error ? lastError.message : '腾讯 OCR 调用失败' }, 502);
 }
