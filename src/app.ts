@@ -102,6 +102,8 @@ const state = createInitialState();
 let ocrDrafts: OCRDraftView[] = [];
 let ocrSettings: OCRSettings = loadOCRSettings();
 let manualTuneDraft: ManualTuneDraft | null = null;
+let isOcrRecognitionRunning = false;
+let activeClassName = '';
 const usageGuideStorageKey = 'classSeatingUsageGuideDismissed';
 
 const getLaunchClassName = (): string => {
@@ -121,6 +123,7 @@ const byId = <T extends HTMLElement>(id: string): T => {
 };
 
 const classSelect = (): HTMLSelectElement => byId<HTMLSelectElement>('classSelect');
+const floatingClassSelect = (): HTMLSelectElement => byId<HTMLSelectElement>('floatingClassSelect');
 const headerClassName = (): HTMLInputElement => byId<HTMLInputElement>('headerClassName');
 const notes = (): HTMLDivElement => byId<HTMLDivElement>('notes');
 const classroom = (): HTMLDivElement => byId<HTMLDivElement>('classroom');
@@ -246,6 +249,29 @@ const layoutLabel = (layout: LayoutType): string => {
   return '圆桌';
 };
 
+const modeLabel = (mode: TimeMode): string => (mode === 'weekday' ? '周中' : '周末');
+
+const syncClassPickerValues = (className: string): void => {
+  classSelect().value = className;
+  floatingClassSelect().value = className;
+};
+
+const updateEditorFloatingContext = (): void => {
+  const floating = byId<HTMLDivElement>('editorFloatingContext');
+  const meta = byId<HTMLSpanElement>('floatingClassMeta');
+  const className = activeClassName.trim();
+
+  floating.classList.toggle('hidden', state.currentView !== 'editor');
+  if (state.currentView !== 'editor') {
+    return;
+  }
+
+  syncClassPickerValues(className);
+  meta.textContent = className
+    ? `${modeLabel(state.currentTimeMode)} · ${layoutLabel(state.currentLayout)}`
+    : '未选择班级';
+};
+
 const formatModeMeta = (mode: ClassConfig[TimeMode]): string => {
   const info = sanitizeLocationInfo(mode.locationInfo);
   const parts = [info.weekday, info.time, info.campus, info.room].filter(Boolean);
@@ -331,25 +357,30 @@ const setCurrentView = (view: 'home' | 'editor'): void => {
     editor.classList.add('hidden');
     updateWelcome();
     renderClassOverview();
+    updateEditorFloatingContext();
     return;
   }
 
   home.classList.add('hidden');
   editor.classList.remove('hidden');
+  updateEditorFloatingContext();
 };
 
 const updateClassSelect = (): void => {
-  const select = classSelect();
-  select.innerHTML = '<option value="">选择班级...</option>';
-
-  Object.keys(state.classData)
-    .sort()
-    .forEach((className) => {
+  const classNames = Object.keys(state.classData).sort();
+  const populate = (select: HTMLSelectElement): void => {
+    select.innerHTML = '<option value="">选择班级...</option>';
+    classNames.forEach((className) => {
       const option = document.createElement('option');
       option.value = className;
       option.textContent = className;
       select.appendChild(option);
     });
+  };
+
+  populate(classSelect());
+  populate(floatingClassSelect());
+  updateEditorFloatingContext();
 };
 
 const sanitizeLocationInfo = (location: Partial<LocationInfo> | undefined): LocationInfo => {
@@ -512,6 +543,8 @@ const applyImportedBackup = (payload: Partial<BackupPayload>): void => {
     clearBatchUndoData();
   }
 
+  activeClassName = '';
+  syncClassPickerValues('');
   updateClassSelect();
   renderClassOverview();
   setCurrentView('home');
@@ -543,6 +576,7 @@ const loadSavedData = (): void => {
   const loaded = loadClassData();
 
   state.classData = sanitizeClassDataMap(loaded);
+  activeClassName = '';
   updateClassSelect();
 };
 
@@ -595,7 +629,7 @@ const ensureClassShell = (className: string): void => {
 };
 
 const saveCurrentClassMode = (): void => {
-  const className = classSelect().value;
+  const className = activeClassName.trim();
   if (!className) {
     return;
   }
@@ -648,6 +682,7 @@ const loadClass = (): void => {
   const data = state.classData[className]?.[state.currentTimeMode];
 
   if (!className || !data) {
+    activeClassName = className || '';
     state.currentLayout = 'circular';
     resetLayoutData();
     state.currentArrangement = 0;
@@ -658,9 +693,11 @@ const loadClass = (): void => {
     setLayoutClass(state.currentLayout);
     refresh();
     updateSyncModeButton();
+    updateEditorFloatingContext();
     return;
   }
 
+  activeClassName = className;
   state.currentLayout = data.layout || 'circular';
   state.currentArrangement = data.currentArrangement || 0;
 
@@ -689,15 +726,76 @@ const loadClass = (): void => {
   setLayoutClass(state.currentLayout);
   refresh();
   updateSyncModeButton();
+  updateEditorFloatingContext();
+};
+
+const applyTimeModeUi = (mode: TimeMode): void => {
+  state.currentTimeMode = mode;
+  byId<HTMLButtonElement>('weekdayBtn').className = 'active';
+  byId<HTMLButtonElement>('weekendBtn').className = '';
+  if (mode === 'weekend') {
+    byId<HTMLButtonElement>('weekdayBtn').className = '';
+    byId<HTMLButtonElement>('weekendBtn').className = 'active';
+  }
+  updateEditorFloatingContext();
+};
+
+const hasOpenEditorDialog = (): boolean =>
+  Array.from(document.querySelectorAll<HTMLElement>('.dialog')).some((dialog) => dialog.style.display === 'block');
+
+const closeEditorTransientUi = (): void => {
+  document.querySelectorAll<HTMLElement>('.dialog').forEach((dialog) => {
+    dialog.style.display = 'none';
+  });
+  byId<HTMLDivElement>('overlay').style.display = 'none';
+  manualTuneDraft = null;
+};
+
+const switchEditorClass = (nextClassName: string, options?: { resetMode?: boolean; preserveDialogs?: boolean }): void => {
+  const targetClassName = nextClassName.trim();
+  const currentClassName = activeClassName.trim();
+
+  if (!targetClassName) {
+    syncClassPickerValues(currentClassName);
+    return;
+  }
+
+  if (targetClassName === currentClassName && state.currentView === 'editor') {
+    syncClassPickerValues(targetClassName);
+    updateEditorFloatingContext();
+    return;
+  }
+
+  if (isOcrRecognitionRunning) {
+    window.alert('图片识别进行中，请等待当前识别完成后再切换班级。');
+    syncClassPickerValues(currentClassName);
+    return;
+  }
+
+  if (!options?.preserveDialogs && hasOpenEditorDialog()) {
+    const shouldContinue = window.confirm('当前有功能弹窗处于打开状态。切换班级会先关闭弹窗，并放弃这些弹窗里未确认的临时修改，是否继续？');
+    if (!shouldContinue) {
+      syncClassPickerValues(currentClassName);
+      return;
+    }
+    closeEditorTransientUi();
+  }
+
+  if (state.currentView === 'editor' && currentClassName) {
+    saveCurrentClassMode();
+  }
+
+  if (options?.resetMode) {
+    applyTimeModeUi('weekday');
+  }
+
+  syncClassPickerValues(targetClassName);
+  loadClass();
+  setCurrentView('editor');
 };
 
 const openClassInEditor = (className: string): void => {
-  classSelect().value = className;
-  state.currentTimeMode = 'weekday';
-  byId<HTMLButtonElement>('weekdayBtn').className = 'active';
-  byId<HTMLButtonElement>('weekendBtn').className = '';
-  loadClass();
-  setCurrentView('editor');
+  switchEditorClass(className, { resetMode: true, preserveDialogs: true });
 };
 
 const goHome = (): void => {
@@ -708,9 +806,7 @@ const goHome = (): void => {
 
 const toggleTime = (mode: TimeMode): void => {
   saveCurrentClassMode();
-  state.currentTimeMode = mode;
-  byId<HTMLButtonElement>('weekdayBtn').className = mode === 'weekday' ? 'active' : '';
-  byId<HTMLButtonElement>('weekendBtn').className = mode === 'weekend' ? 'active' : '';
+  applyTimeModeUi(mode);
   loadClass();
 };
 
@@ -775,10 +871,12 @@ const saveClass = (): void => {
 
   persist();
   updateClassSelect();
-  classSelect().value = className;
+  syncClassPickerValues(className);
+  activeClassName = className;
   headerClassName().value = className;
   hideSaveDialog();
   renderClassOverview();
+  updateEditorFloatingContext();
 };
 
 const deleteCurrentClass = (): void => {
@@ -797,6 +895,8 @@ const deleteCurrentClass = (): void => {
   renderClassOverview();
 
   headerClassName().value = '';
+  activeClassName = '';
+  syncClassPickerValues('');
   state.currentLayout = 'circular';
   resetLayoutData();
   state.currentArrangement = 0;
@@ -804,6 +904,7 @@ const deleteCurrentClass = (): void => {
   applyTheme(state.userProfile.theme);
   setLocationInfo(makeEmptyLocationInfo());
   refresh();
+  updateEditorFloatingContext();
 };
 
 const renameCurrentClass = (): void => {
@@ -830,7 +931,8 @@ const renameCurrentClass = (): void => {
   persist();
   updateClassSelect();
   renderClassOverview();
-  classSelect().value = newName;
+  syncClassPickerValues(newName);
+  activeClassName = newName;
   headerClassName().value = newName;
   loadClass();
 };
@@ -870,6 +972,7 @@ const showSuccess = (message: string): void => {
 const ensureClassForImportSave = (): string | null => {
   const selected = classSelect().value.trim();
   if (selected) {
+    activeClassName = selected;
     return selected;
   }
 
@@ -882,7 +985,8 @@ const ensureClassForImportSave = (): string | null => {
 
   ensureClassShell(className);
   updateClassSelect();
-  classSelect().value = className;
+  syncClassPickerValues(className);
+  activeClassName = className;
   headerClassName().value = className;
   return className;
 };
@@ -1306,7 +1410,12 @@ const toggleLayout = (): void => {
         ? collectStudentsFromRows(state.rowGroups)
         : collectStudentsFromArc(state.arcGroups);
 
-  const nextLayout: LayoutType = state.currentLayout === 'circular' ? 'rows' : 'circular';
+  const nextLayout: LayoutType =
+    state.currentLayout === 'circular'
+      ? 'rows'
+      : state.currentLayout === 'rows'
+        ? 'arc'
+        : 'circular';
 
   if (currentStudents.length > layoutMaxStudents(nextLayout)) {
     alert(`当前人数超出${nextLayout}布局上限`);
@@ -1326,11 +1435,20 @@ const toggleLayout = (): void => {
     state.groups = makeEmptyCircularGroups();
     state.currentGroupOrder = [1, 2, 3, 4, 5, 6];
     state.arcGroups = makeEmptyArcGroups();
+  } else {
+    const splitIndex = Math.ceil(currentStudents.length / 2);
+    state.arcGroups = makeEmptyArcGroups();
+    placeCentered(state.arcGroups.rows[0], currentStudents.slice(0, splitIndex));
+    placeCentered(state.arcGroups.rows[1], currentStudents.slice(splitIndex, splitIndex + 18));
+    state.groups = makeEmptyCircularGroups();
+    state.currentGroupOrder = [1, 2, 3, 4, 5, 6];
+    state.rowGroups = makeEmptyRowGroups();
   }
 
   setLayoutClass(nextLayout);
   refresh();
   saveCurrentClassMode();
+  updateEditorFloatingContext();
 };
 
 const updateLayoutDescription = (): void => {
@@ -1692,45 +1810,50 @@ const startImageRecognition = async (): Promise<void> => {
 
   ocrDrafts = [];
   renderOcrReview();
+  isOcrRecognitionRunning = true;
 
-  for (let index = 0; index < files.length; index += 1) {
-    const file = files[index];
-    progress.textContent = `正在识别 ${index + 1}/${files.length}: ${file.name}（${settings.engine}）`;
+  try {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      progress.textContent = `正在识别 ${index + 1}/${files.length}: ${file.name}（${settings.engine}）`;
 
-    try {
-      const result = await recognizeClassFromImage(file, settings);
-      ocrDrafts.push(toDraft(result));
-      renderOcrReview();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '识别失败';
-      ocrDrafts.push({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        fileName: file.name,
-        source: `failed:${settings.engine}`,
-        errorMessage: message,
-        className: file.name.replace(/\.[^.]+$/, ''),
-        layout: 'circular',
-        mode: 'weekday',
-        overwrite: true,
-        groupsText: '',
-        detectedStudentCount: 0,
-        placedStudentCount: 0,
-        confidence: 0,
-        date: '',
-        day: '',
-        weekday: '',
-        time: '',
-        campus: '',
-        floor: '',
-        room: '',
-        fullDate: ''
-      });
-      progress.textContent = `图片 ${file.name} 识别失败：${message}`;
-      renderOcrReview();
+      try {
+        const result = await recognizeClassFromImage(file, settings);
+        ocrDrafts.push(toDraft(result));
+        renderOcrReview();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '识别失败';
+        ocrDrafts.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          fileName: file.name,
+          source: `failed:${settings.engine}`,
+          errorMessage: message,
+          className: file.name.replace(/\.[^.]+$/, ''),
+          layout: 'circular',
+          mode: 'weekday',
+          overwrite: true,
+          groupsText: '',
+          detectedStudentCount: 0,
+          placedStudentCount: 0,
+          confidence: 0,
+          date: '',
+          day: '',
+          weekday: '',
+          time: '',
+          campus: '',
+          floor: '',
+          room: '',
+          fullDate: ''
+        });
+        progress.textContent = `图片 ${file.name} 识别失败：${message}`;
+        renderOcrReview();
+      }
     }
-  }
 
-  progress.textContent = `识别完成，共 ${ocrDrafts.length} 条，可修改后确认导入。`;
+    progress.textContent = `识别完成，共 ${ocrDrafts.length} 条，可修改后确认导入。`;
+  } finally {
+    isOcrRecognitionRunning = false;
+  }
 };
 
 const draftToModeData = (draft: OCRDraftView): ClassConfig[TimeMode] => {
@@ -2724,8 +2847,12 @@ const bindCoreEvents = (): void => {
 
     // In swap mode (a seat is already selected), clicking any part of another seat
     // triggers the swap — even if the click lands on the input element.
-    // Outside swap mode, clicks on input are ignored so users can edit names.
+    // Outside swap mode, clicking input also selects the seat (prevents input focus so
+    // the whole cell is a usable click target, not just the tiny label area).
     if (!manualTuneDraft.selectedSeatKey && target.closest('input')) {
+      event.preventDefault();
+      manualTuneDraft.selectedSeatKey = key;
+      renderManualTuneEditor();
       return;
     }
 
@@ -2795,6 +2922,14 @@ const bindCoreEvents = (): void => {
     applyTheme(value);
     persist();
     renderClassOverview();
+  });
+  classSelect().addEventListener('change', (event) => {
+    const target = event.target as HTMLSelectElement;
+    switchEditorClass(target.value);
+  });
+  floatingClassSelect().addEventListener('change', (event) => {
+    const target = event.target as HTMLSelectElement;
+    switchEditorClass(target.value);
   });
 
   byId<HTMLInputElement>('circularLayout').addEventListener('change', updateLayoutDescription);
@@ -2937,4 +3072,14 @@ export const initApp = (): void => {
   renderClassOverview();
   setCurrentView('home');
   applyLaunchClass();
+
+  // When embedded in an iframe (e.g. inside classsitdown), the outer React shell
+  // already provides a back button. Hide the seating app's own "返回主页" to avoid
+  // two competing back actions confusing the teacher.
+  if (window.self !== window.top) {
+    const backHomeBtn = document.querySelector<HTMLElement>('.back-home');
+    if (backHomeBtn) {
+      backHomeBtn.style.display = 'none';
+    }
+  }
 };

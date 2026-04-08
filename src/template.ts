@@ -53,6 +53,7 @@ export const appTemplate = `
           <ul>
             <li>点击“新建班级座位表”开始建班。</li>
             <li>支持文字导入、图片 OCR 导入，也可以后续手动补名字。</li>
+            <li>图片导入会先识别班号、名单、时间和教室，再让你人工确认后写入。</li>
             <li>只导入了周中或周末其中一边时，可在班内把已有座位同步到另一时段。</li>
           </ul>
         </article>
@@ -77,6 +78,7 @@ export const appTemplate = `
           <ul>
             <li>给公司部署时，上传打包后的 dist 全部文件即可。</li>
             <li>当前版本数据默认保存在浏览器本地，同一浏览器会记住，上线后不会自动跨设备同步。</li>
+            <li>OCR 是否走正式接口，取决于这里配置的 OCR 通道，不是所有环境都会自动带上。</li>
             <li>如需所有设备共用同一份实时数据，后续需要再接后端存储。</li>
           </ul>
         </article>
@@ -90,6 +92,14 @@ export const appTemplate = `
   </section>
 
   <section class="editor-view hidden" id="editorView">
+    <div class="editor-floating-context hidden" id="editorFloatingContext">
+      <span class="editor-floating-label">当前班级</span>
+      <select id="floatingClassSelect">
+        <option value="">选择班级...</option>
+      </select>
+      <span class="editor-floating-meta" id="floatingClassMeta">未选择班级</span>
+    </div>
+
     <div class="editor-stage">
       <div class="editor-topbar">
         <button class="back-home" onclick="goHome()">返回主页</button>
@@ -99,7 +109,7 @@ export const appTemplate = `
       <div class="class-selector">
         <div class="class-selector-main">
           <label class="class-selector-label" for="classSelect">当前班级</label>
-          <select id="classSelect" onchange="loadClass()">
+          <select id="classSelect">
             <option value="">选择班级...</option>
           </select>
         </div>
@@ -278,7 +288,7 @@ export const appTemplate = `
 
   <div class="dialog" id="imageImportDialog">
     <h2>图片识别导入</h2>
-    <p>支持单图单班级与多图多班级，识别后可人工修改再导入。</p>
+    <p>支持单图单班级与多图多班级。先确认 OCR 通道，再识别，再人工核对后导入。</p>
     <div class="ocr-config-grid">
       <label>识别引擎
         <select id="ocrEngine">
@@ -311,7 +321,7 @@ export const appTemplate = `
         <button type="button" onclick="checkOCRChannel()">检测OCR通道</button>
         <div id="ocrEngineStatus" class="muted">点击“检测OCR通道”可验证当前是否走腾讯AI接口。</div>
       </div>
-      <div class="ocr-hint">提示：先启动本地代理 npm run ocr:proxy，再点击“开始识别”。</div>
+      <div class="ocr-hint">提示：正式环境请先填写你们的 OCR 接口地址并做一次检测；只有本地调试时才需要 npm run ocr:proxy。</div>
     </div>
     <input type="file" id="imageFiles" accept="image/*" multiple />
     <div id="ocrProgress" class="progress"></div>

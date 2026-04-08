@@ -652,6 +652,52 @@ button:disabled {
   zoom: 0.9;
 }
 
+.editor-floating-context {
+  position: fixed;
+  top: 18px;
+  right: max(18px, calc((100vw - 1500px) / 2 + 18px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border) 82%);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-strong) 92%, white 8%);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(12px);
+  z-index: 1101;
+}
+
+.editor-floating-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.editor-floating-context select {
+  min-width: 110px;
+  max-width: 150px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--field-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.editor-floating-meta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--chip-text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .editor-topbar {
   display: flex;
   align-items: center;
@@ -1525,9 +1571,19 @@ button:disabled {
   border-color: color-mix(in srgb, var(--primary) 32%, var(--border) 68%);
 }
 
+#manualTuneDialog .buttons {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface-strong);
+  padding-top: 10px;
+  margin-top: 0;
+  border-top: 1px solid var(--border);
+  z-index: 1;
+}
+
 .manual-seat-editor {
   margin-top: 14px;
-  max-height: 62vh;
+  max-height: 55vh;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1552,7 +1608,8 @@ button:disabled {
 
 .manual-seat-editor .seat {
   position: relative;
-  min-height: 62px;
+  min-height: 72px;
+  min-width: 84px;
   border-radius: 14px;
   padding: 6px;
 }
@@ -1583,12 +1640,16 @@ button:disabled {
 .manual-seat input {
   width: 100%;
   height: 100%;
-  min-height: 48px;
+  min-height: 52px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 18px 8px 8px;
+  padding: 18px 6px 8px;
   background: var(--field-bg);
   text-align: center;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .manual-seat-clear {
@@ -1668,6 +1729,13 @@ button:disabled {
 @media (max-width: 1024px) {
   .editor-view {
     zoom: 1;
+  }
+
+  .editor-floating-context {
+    position: static;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .main-content {

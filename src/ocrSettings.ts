@@ -1,17 +1,28 @@
 import type { OCRSettings } from './types';
 
 const OCR_SETTINGS_STORAGE_KEY = 'classSeatingOCRSettings';
+const OCR_ENDPOINT_QUERY_KEY = 'ocrEndpoint';
 
 const isLocalDev = (): boolean =>
   location.hostname === '127.0.0.1' || location.hostname === 'localhost';
 
+const getQueryEndpoint = (): string => {
+  try {
+    return new URLSearchParams(location.search).get(OCR_ENDPOINT_QUERY_KEY)?.trim().replace(/\/$/, '') || '';
+  } catch {
+    return '';
+  }
+};
+
+const getInitialEndpoint = (): string => getQueryEndpoint() || (isLocalDev() ? 'http://127.0.0.1:8787' : '');
+
 const normalizeEndpoint = (value: string): string => {
   const trimmed = value.trim().replace(/\/$/, '');
-  return trimmed || (isLocalDev() ? 'http://127.0.0.1:8787' : '');
+  return trimmed || getInitialEndpoint();
 };
 
 export const getDefaultOCREndpoint = (): string =>
-  isLocalDev() ? 'http://127.0.0.1:8787' : '';
+  getInitialEndpoint();
 
 export const makeDefaultOCRSettings = (): OCRSettings => ({
   engine: 'hybrid',
