@@ -25,8 +25,16 @@ export interface CnfRosterResult {
   total: number;
 }
 
-const getEndpoint = (): string =>
-  getDefaultOCREndpoint().replace(/\/$/, '') || '';
+const isLocalDev = (): boolean =>
+  location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+
+const getEndpoint = (): string => {
+  if (isLocalDev()) {
+    return getDefaultOCREndpoint().replace(/\/$/, '') || '';
+  }
+  // On deployed site, use same-origin Pages Functions
+  return '';
+};
 
 export const loadCnfCredentials = (): CnfCredentials => {
   const raw = readStorageValue(storageKeys.cnfSyncProfile);
