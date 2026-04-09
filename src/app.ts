@@ -49,7 +49,7 @@ import {
   saveClassData,
   saveUserProfile
 } from './storage';
-import { cnfFetchRoster, cnfLogin, extractSquadIdFromUrl, loadCnfCredentials, saveCnfCredentials } from './cnfSync';
+import { cnfFetchRoster, cnfLoginAndListSquads, loadCnfCredentials, saveCnfCredentials } from './cnfSync';
 import type { ArcGroups, ClassConfig, ClassData, ClassSnapshot, LayoutType, LocationInfo, OCRSettings, ThemeName, TimeMode } from './types';
 
 interface OCRDraftView {
@@ -2352,10 +2352,7 @@ const showCnfSyncDialog = (): void => {
   const creds = loadCnfCredentials();
   byId<HTMLInputElement>('cnfUsername').value = creds.username;
   byId<HTMLInputElement>('cnfPassword').value = creds.password;
-
-  const currentCnf = activeClassName ? state.classData[activeClassName]?.cnf : null;
-  byId<HTMLInputElement>('cnfSquadId').value = currentCnf?.squadId || '';
-
+  byId<HTMLDivElement>('cnfSquadPickerWrap').style.display = 'none';
   byId<HTMLButtonElement>('cnfFetchBtn').disabled = true;
   setCnfStatus('');
   showDialog('cnfSyncDialog');
@@ -2378,12 +2375,34 @@ const cnfLoginAction = async (): Promise<void> => {
     return;
   }
   cnfSyncBusy = true;
-  setCnfStatus('正在验证登录...', 'cnf-busy');
+  setCnfStatus('正在登录并加载班级列表...', 'cnf-busy');
   try {
-    await cnfLogin(creds);
+    const squads = await cnfLoginAndListSquads(creds);
     saveCnfCredentials(creds);
-    setCnfStatus('登录成功，可以抓取名单了', 'cnf-ok');
+
+    const select = byId<HTMLSelectElement>('cnfSquadSelect');
+    select.innerHTML = '';
+    if (squads.length === 0) {
+      select.innerHTML = '<option value="">暂无班级</option>';
+    } else {
+      select.innerHTML = '<option value="">-- 选择班级 --</option>';
+      for (const s of squads) {
+        const opt = document.createElement('option');
+        opt.value = String(s.id);
+        opt.textContent = `${s.name}（${s.section} · ${s.tutor} · ${s.num}人）`;
+        select.appendChild(opt);
+      }
+    }
+
+    // Pre-select if current class has a cnf binding
+    const currentCnf = activeClassName ? state.classData[activeClassName]?.cnf : null;
+    if (currentCnf?.squadId) {
+      select.value = currentCnf.squadId;
+    }
+
+    byId<HTMLDivElement>('cnfSquadPickerWrap').style.display = '';
     byId<HTMLButtonElement>('cnfFetchBtn').disabled = false;
+    setCnfStatus(`已加载 ${squads.length} 个班级，选一个然后点"抓取名单"`, 'cnf-ok');
   } catch (err) {
     setCnfStatus(err instanceof Error ? err.message : '登录失败', 'cnf-err');
   } finally {
@@ -2394,10 +2413,9 @@ const cnfLoginAction = async (): Promise<void> => {
 const cnfFetchAction = async (): Promise<void> => {
   if (cnfSyncBusy) return;
   const creds = getCnfFormCreds();
-  const rawId = byId<HTMLInputElement>('cnfSquadId').value;
-  const squadId = extractSquadIdFromUrl(rawId);
+  const squadId = byId<HTMLSelectElement>('cnfSquadSelect').value;
   if (!squadId) {
-    setCnfStatus('请填写班级 ID 或粘贴班控台链接', 'cnf-err');
+    setCnfStatus('请先选择一个班级', 'cnf-err');
     return;
   }
 
@@ -2416,18 +2434,15 @@ const cnfFetchAction = async (): Promise<void> => {
       return;
     }
 
-    // Determine target class name
     const squadName = result.squad.name || result.squad.fullName || `班级${squadId}`;
     let targetClassName = activeClassName || squadName;
 
-    // If no active class, create one
     if (!activeClassName) {
       const shell = makeClassShell('circular', state.userProfile.theme);
       state.classData[squadName] = shell;
       targetClassName = squadName;
     }
 
-    // Write names into current layout (circular default)
     const config = state.classData[targetClassName];
     if (config) {
       config.cnf = {
@@ -2438,7 +2453,6 @@ const cnfFetchAction = async (): Promise<void> => {
         lastSyncedAt: new Date().toISOString()
       };
 
-      // Put students into weekday circular groups
       const maxSlots = layoutMaxStudents('circular');
       const sliced = names.slice(0, maxSlots);
       const groups = convertStudentsToCircular(sliced);
@@ -2448,14 +2462,12 @@ const cnfFetchAction = async (): Promise<void> => {
 
       saveClassData(state.classData);
 
-      // Switch to that class
       classSelect().value = targetClassName;
       loadClass();
       renderClassOverview();
       refresh();
     }
 
-    // Brief toast-like feedback — reuse showSuccess from import flow
     const errorMsg = byId<HTMLDivElement>('errorMsg');
     errorMsg.textContent = `已从教务系统导入 ${names.length} 名学生（${squadName}）`;
     errorMsg.className = 'success';

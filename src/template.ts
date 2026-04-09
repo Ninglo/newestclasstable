@@ -418,15 +418,15 @@ Group 1: Amy, Lucas</div>
         <label for="cnfPassword">密码</label>
         <input type="password" id="cnfPassword" placeholder="教务系统密码" autocomplete="current-password" />
       </div>
-      <div class="cnf-field">
-        <label for="cnfSquadId">班级 ID 或页面链接</label>
-        <input type="text" id="cnfSquadId" placeholder="如 1235 或粘贴班控台页面链接" />
+      <div class="cnf-field cnf-squad-picker" id="cnfSquadPickerWrap" style="display:none">
+        <label for="cnfSquadSelect">选择班级</label>
+        <select id="cnfSquadSelect"><option value="">-- 请先登录 --</option></select>
       </div>
     </div>
     <div id="cnfSyncStatus" class="cnf-sync-status"></div>
     <div class="buttons">
       <button class="cancel" onclick="hideCnfSyncDialog()">取消</button>
-      <button id="cnfLoginBtn" onclick="cnfLoginAction()">验证登录</button>
+      <button id="cnfLoginBtn" onclick="cnfLoginAction()">登录并加载班级</button>
       <button id="cnfFetchBtn" class="confirm" onclick="cnfFetchAction()" disabled>抓取名单</button>
     </div>
   </div>

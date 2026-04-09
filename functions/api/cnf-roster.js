@@ -142,6 +142,30 @@ export async function onRequest(context) {
     }
   }
 
+  if (action === 'listSquads') {
+    try {
+      const jar = await loginCNF(username, password);
+      const listResp = await fetchWithJar(
+        `${CNF_BASE_URL}/admin/squad/getTableData`,
+        { method: 'GET', headers: { Accept: 'application/json, text/plain, */*' } }, jar
+      );
+      const listData = await listResp.json().catch(() => ({}));
+      if (!listResp.ok || Number(listData?.code) !== 1 || !Array.isArray(listData?.data)) {
+        throw new Error(String(listData?.msg || `班级列表获取失败: ${listResp.status}`));
+      }
+      const squads = listData.data.map(item => ({
+        id: Number(item?.id) || 0,
+        name: String(item?.name || '').trim(),
+        section: String(item?.section || '').trim(),
+        tutor: String(item?.tutor || '').trim(),
+        num: Number(item?.num) || 0,
+      }));
+      return jsonResponse(200, { ok: true, squads, total: squads.length });
+    } catch (e) {
+      return jsonResponse(502, { ok: false, error: e instanceof Error ? e.message : '获取班级列表失败' });
+    }
+  }
+
   if (action !== 'fetchRoster') return jsonResponse(400, { ok: false, error: 'action 必须为 login 或 fetchRoster' });
   if (!squadId || !/^\d+$/.test(squadId)) return jsonResponse(400, { ok: false, error: '缺少有效的班级 ID（squad_id）' });
 

@@ -665,8 +665,36 @@ const handleCNFRoster = async (res, bodyText) => {
     }
   }
 
+  if (action === 'listSquads') {
+    try {
+      const cookieJar = await loginCNF({ username, password });
+      const listResp = await fetchWithCookieJar(
+        `${CNF_BASE_URL}/admin/squad/getTableData`,
+        { method: 'GET', headers: { Accept: 'application/json, text/plain, */*' } },
+        cookieJar
+      );
+      const listData = await listResp.json().catch(() => ({}));
+      if (!listResp.ok || Number(listData?.code) !== 1 || !Array.isArray(listData?.data)) {
+        throw new Error(String(listData?.msg || `班级列表获取失败: HTTP ${listResp.status}`));
+      }
+      const squads = listData.data.map((item) => ({
+        id: Number(item?.id) || 0,
+        name: String(item?.name || '').trim(),
+        section: String(item?.section || '').trim(),
+        tutor: String(item?.tutor || '').trim(),
+        num: Number(item?.num) || 0
+      }));
+      send(res, json(200, { ok: true, squads, total: squads.length }));
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '获取班级列表失败';
+      send(res, json(502, { ok: false, error: message }));
+      return;
+    }
+  }
+
   if (action !== 'fetchRoster') {
-    send(res, json(400, { ok: false, error: 'action 必须为 login 或 fetchRoster' }));
+    send(res, json(400, { ok: false, error: 'action 必须为 login、listSquads 或 fetchRoster' }));
     return;
   }
 

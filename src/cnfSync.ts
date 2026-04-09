@@ -6,6 +6,14 @@ export interface CnfCredentials {
   password: string;
 }
 
+export interface CnfSquadSummary {
+  id: number;
+  name: string;
+  section: string;
+  tutor: string;
+  num: number;
+}
+
 export interface CnfStudent {
   id: number;
   no: string;
@@ -32,7 +40,6 @@ const getEndpoint = (): string => {
   if (isLocalDev()) {
     return getDefaultOCREndpoint().replace(/\/$/, '') || '';
   }
-  // On deployed site, use same-origin Pages Functions
   return '';
 };
 
@@ -57,24 +64,26 @@ export const saveCnfCredentials = (creds: CnfCredentials): void => {
   );
 };
 
-export const cnfLogin = async (creds: CnfCredentials): Promise<void> => {
+const cnfPost = async (action: string, payload: Record<string, string>): Promise<Record<string, unknown>> => {
   const endpoint = getEndpoint();
-  if (!endpoint) throw new Error('OCR 代理未配置，教务同步不可用');
-
   const resp = await fetch(`${endpoint}/api/cnf-roster`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'login',
-      username: creds.username.trim(),
-      password: creds.password
-    })
+    body: JSON.stringify({ action, ...payload })
   });
-
-  const data = (await resp.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  const data = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
   if (!resp.ok || !data.ok) {
-    throw new Error(data.error || `登录失败 (${resp.status})`);
+    throw new Error(String(data.error || `请求失败 (${resp.status})`));
   }
+  return data;
+};
+
+export const cnfLoginAndListSquads = async (creds: CnfCredentials): Promise<CnfSquadSummary[]> => {
+  const data = await cnfPost('listSquads', {
+    username: creds.username.trim(),
+    password: creds.password
+  });
+  return (data.squads as CnfSquadSummary[]) || [];
 };
 
 export const cnfFetchRoster = async (
@@ -82,36 +91,15 @@ export const cnfFetchRoster = async (
   squadId: string,
   squadType?: string
 ): Promise<CnfRosterResult> => {
-  const endpoint = getEndpoint();
-  if (!endpoint) throw new Error('OCR 代理未配置，教务同步不可用');
-
-  const resp = await fetch(`${endpoint}/api/cnf-roster`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'fetchRoster',
-      username: creds.username.trim(),
-      password: creds.password,
-      squadId: String(squadId).trim(),
-      squadType: squadType || 'offline'
-    })
+  const data = await cnfPost('fetchRoster', {
+    username: creds.username.trim(),
+    password: creds.password,
+    squadId: String(squadId).trim(),
+    squadType: squadType || 'offline'
   });
-
-  const data = (await resp.json().catch(() => ({}))) as CnfRosterResult & { ok?: boolean; error?: string };
-  if (!resp.ok || !data.ok) {
-    throw new Error(data.error || `名单获取失败 (${resp.status})`);
-  }
-
-  return { squad: data.squad, students: data.students, total: data.total };
-};
-
-export const extractSquadIdFromUrl = (input: string): string => {
-  const trimmed = input.trim();
-  if (/^\d+$/.test(trimmed)) return trimmed;
-  try {
-    const url = new URL(trimmed);
-    return url.searchParams.get('id')?.trim() || '';
-  } catch {
-    return '';
-  }
+  return {
+    squad: data.squad as CnfRosterResult['squad'],
+    students: data.students as CnfStudent[],
+    total: data.total as number
+  };
 };
