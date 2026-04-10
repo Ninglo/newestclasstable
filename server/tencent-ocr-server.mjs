@@ -107,11 +107,38 @@ const fetchWithCookieJar = async (url, options, cookieJar) => {
 
   const response = await fetch(url, {
     ...options,
-    headers
+    headers,
+    redirect: 'manual'
   });
 
   mergeCookiesFromResponse(cookieJar, response);
   return response;
+};
+
+const parseMySquadHtml = (html) => {
+  const classes = [];
+  const rowPattern = /<tr\s*>([\s\S]*?)<\/tr>/gi;
+  let match;
+  while ((match = rowPattern.exec(html)) !== null) {
+    const content = match[1];
+    const idMatch = content.match(/data-id="(\d+)"/);
+    const linkMatch = content.match(/squad_console\?type=(\w+)&id=(\d+)/);
+    const nameMatch = content.match(/column-name[^>]*>\s*(?:<a[^>]*>)?\s*([^<]+)/);
+    const sectionMatch = content.match(/column-section[^>]*>\s*([\s\S]*?)\s*<\/td>/);
+    const groupMatch = content.match(/column-group[^>]*>\s*([\s\S]*?)\s*<\/td>/);
+    const teacherMatch = content.match(/column-class_teacher[^>]*>\s*([\s\S]*?)\s*<\/td>/);
+    if (idMatch && nameMatch) {
+      classes.push({
+        id: Number(idMatch[1]),
+        type: linkMatch?.[1] || 'offline',
+        name: nameMatch[1].trim(),
+        section: (sectionMatch?.[1] || '').replace(/<[^>]+>/g, '').trim(),
+        group: (groupMatch?.[1] || '').replace(/<[^>]+>/g, '').trim(),
+        tutor: (teacherMatch?.[1] || '').replace(/<[^>]+>/g, '').trim()
+      });
+    }
+  }
+  return classes;
 };
 
 const extractLoginToken = (html) => {
@@ -668,26 +695,20 @@ const handleCNFRoster = async (res, bodyText) => {
   if (action === 'listSquads') {
     try {
       const cookieJar = await loginCNF({ username, password });
-      const listResp = await fetchWithCookieJar(
-        `${CNF_BASE_URL}/admin/squad/getTableData`,
-        { method: 'GET', headers: { Accept: 'application/json, text/plain, */*' } },
+      const mySquadResp = await fetchWithCookieJar(
+        `${CNF_BASE_URL}/admin/my_squad`,
+        { method: 'GET', headers: { Accept: 'text/html' } },
         cookieJar
       );
-      const listData = await listResp.json().catch(() => ({}));
-      if (!listResp.ok || Number(listData?.code) !== 1 || !Array.isArray(listData?.data)) {
-        throw new Error(String(listData?.msg || `班级列表获取失败: HTTP ${listResp.status}`));
+      if (mySquadResp.status >= 300 && mySquadResp.status < 400) {
+        throw new Error('登录态已失效，请重新登录');
       }
-      const squads = listData.data.map((item) => ({
-        id: Number(item?.id) || 0,
-        name: String(item?.name || '').trim(),
-        section: String(item?.section || '').trim(),
-        tutor: String(item?.tutor || '').trim(),
-        num: Number(item?.num) || 0
-      }));
+      const mySquadHtml = await mySquadResp.text();
+      const squads = parseMySquadHtml(mySquadHtml);
       send(res, json(200, { ok: true, squads, total: squads.length }));
       return;
     } catch (error) {
-      const message = error instanceof Error ? error.message : '获取班级列表失败';
+      const message = error instanceof Error ? error.message : '获取我的班级失败';
       send(res, json(502, { ok: false, error: message }));
       return;
     }

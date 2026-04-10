@@ -9,9 +9,10 @@ export interface CnfCredentials {
 export interface CnfSquadSummary {
   id: number;
   name: string;
+  type: string;
   section: string;
+  group: string;
   tutor: string;
-  num: number;
 }
 
 export interface CnfStudent {

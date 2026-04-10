@@ -11,15 +11,9 @@ function jsonResponse(status, payload) {
   return new Response(JSON.stringify(payload), { status, headers: corsHeaders });
 }
 
-function getSetCookieLines(headers) {
-  if (typeof headers.getSetCookie === 'function') return headers.getSetCookie();
-  const raw = headers.get('set-cookie');
-  if (!raw) return [];
-  return raw.split(/,(?=\s*[^;,=\s]+=[^;,]*)/g).map(l => l.trim()).filter(Boolean);
-}
-
 function mergeCookies(jar, headers) {
-  for (const line of getSetCookieLines(headers)) {
+  const lines = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+  for (const line of lines) {
     const pair = line.split(';', 1)[0] || '';
     const sep = pair.indexOf('=');
     if (sep <= 0) continue;
@@ -42,75 +36,63 @@ async function fetchWithJar(url, options, jar) {
   return resp;
 }
 
-function extractLoginToken(html) {
-  const m = html.match(/_token:\s*"([^"]+)"/);
-  return m?.[1]?.trim() || '';
-}
-
 async function loginCNF(username, password) {
   const jar = {};
+
+  // Step 1: GET login page for CSRF token
   const pageResp = await fetchWithJar(`${CNF_BASE_URL}/admin/auth/login`, { method: 'GET' }, jar);
-  if (!pageResp.ok) throw new Error(`教务登录页请求失败: ${pageResp.status}`);
-  const html = await pageResp.text();
-  const token = extractLoginToken(html);
+  const pageHtml = await pageResp.text();
+  const token = pageHtml.match(/_token:\s*"([^"]+)"/)?.[1]?.trim();
   if (!token) throw new Error('未能解析教务系统登录 token');
 
+  // Step 2: POST login
   const body = new URLSearchParams({ username, password, _token: token, remember: 'false' });
   const loginResp = await fetchWithJar(`${CNF_BASE_URL}/admin/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', Accept: 'application/json, text/plain, */*' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      Accept: 'application/json, text/plain, */*',
+    },
     body: body.toString(),
   }, jar);
 
+  // Handle both 200 (JSON body) and 302 (redirect on success)
+  if (loginResp.status >= 300 && loginResp.status < 400) {
+    // Redirect means login succeeded (Laravel pattern)
+    return jar;
+  }
+
   const data = await loginResp.json().catch(() => ({}));
-  if (!loginResp.ok) throw new Error(`教务登录失败: HTTP ${loginResp.status}`);
-  if (String(data?.code) !== '1') throw new Error(String(data?.msg || '账号或密码错误'));
+  if (String(data?.code) !== '1') {
+    throw new Error(String(data?.msg || '账号或密码错误'));
+  }
   return jar;
 }
 
-async function fetchRoster(username, password, squadId, squadType) {
-  const jar = await loginCNF(username, password);
-  const st = squadType || 'offline';
-
-  const infoResp = await fetchWithJar(
-    `${CNF_BASE_URL}/admin/squad_console/getSquadInfo?squad_id=${encodeURIComponent(squadId)}`,
-    { method: 'GET', headers: { Accept: 'application/json, text/plain, */*' } }, jar
-  );
-  const infoData = await infoResp.json().catch(() => ({}));
-  if (!infoResp.ok || Number(infoData?.code) !== 1) {
-    throw new Error(String(infoData?.msg || `班级信息获取失败: ${infoResp.status}`));
+function parseMySquadHtml(html) {
+  const classes = [];
+  const rowPattern = /<tr\s*>([\s\S]*?)<\/tr>/gi;
+  let match;
+  while ((match = rowPattern.exec(html)) !== null) {
+    const content = match[1];
+    const idMatch = content.match(/data-id="(\d+)"/);
+    const linkMatch = content.match(/squad_console\?type=(\w+)&id=(\d+)/);
+    const nameMatch = content.match(/column-name[^>]*>\s*(?:<a[^>]*>)?\s*([^<]+)/);
+    const sectionMatch = content.match(/column-section[^>]*>\s*([\s\S]*?)\s*<\/td>/);
+    const groupMatch = content.match(/column-group[^>]*>\s*([\s\S]*?)\s*<\/td>/);
+    const teacherMatch = content.match(/column-class_teacher[^>]*>\s*([\s\S]*?)\s*<\/td>/);
+    if (idMatch && nameMatch) {
+      classes.push({
+        id: Number(idMatch[1]),
+        type: linkMatch?.[1] || 'offline',
+        name: nameMatch[1].trim(),
+        section: (sectionMatch?.[1] || '').replace(/<[^>]+>/g, '').trim(),
+        group: (groupMatch?.[1] || '').replace(/<[^>]+>/g, '').trim(),
+        tutor: (teacherMatch?.[1] || '').replace(/<[^>]+>/g, '').trim(),
+      });
+    }
   }
-
-  const listResp = await fetchWithJar(
-    `${CNF_BASE_URL}/admin/squad/cop_mip/getStudentList?squad_id=${encodeURIComponent(squadId)}&squad_type=${encodeURIComponent(st)}`,
-    { method: 'GET', headers: { Accept: 'application/json, text/plain, */*' } }, jar
-  );
-  const listData = await listResp.json().catch(() => ({}));
-  if (!listResp.ok || Number(listData?.code) !== 1 || !Array.isArray(listData?.data)) {
-    throw new Error(String(listData?.msg || `学生名单获取失败: ${listResp.status}`));
-  }
-
-  const students = listData.data.map(item => {
-    const en = String(item?.en_name || '').trim();
-    const ch = String(item?.ch_name || '').trim();
-    return { id: Number(item?.id) || 0, no: String(item?.no || '').trim(), enName: en, chName: ch, displayName: en || ch || String(item?.no || '').trim() };
-  });
-
-  const squad = infoData?.data || {};
-  return {
-    squad: { id: Number(squad?.id) || Number(squadId), name: String(squad?.name || '').trim(), fullName: String(squad?.full_name || '').trim(), type: st },
-    students,
-  };
-}
-
-function parseClassInput(input) {
-  const raw = String(input || '').trim();
-  if (!raw) return { squadId: '', squadType: '' };
-  if (/^\d+$/.test(raw)) return { squadId: raw, squadType: '' };
-  try {
-    const u = new URL(raw);
-    return { squadId: String(u.searchParams.get('id') || '').trim(), squadType: String(u.searchParams.get('type') || '').trim() };
-  } catch { return { squadId: '', squadType: '' }; }
+  return classes;
 }
 
 export async function onRequest(context) {
@@ -127,52 +109,80 @@ export async function onRequest(context) {
   const action = String(parsed?.action || '').trim();
   const username = String(parsed?.username || '').trim();
   const password = String(parsed?.password || '');
-  const classInfo = parseClassInput(parsed?.classUrl || '');
-  const squadId = String(parsed?.squadId || classInfo.squadId || '').trim();
-  const squadType = String(parsed?.squadType || classInfo.squadType || 'offline').trim() || 'offline';
+  const squadId = String(parsed?.squadId || '').trim();
+  const squadType = String(parsed?.squadType || 'offline').trim() || 'offline';
 
   if (!username || !password) return jsonResponse(400, { ok: false, error: '缺少教务账号或密码' });
 
-  if (action === 'login') {
-    try {
-      await loginCNF(username, password);
-      return jsonResponse(200, { ok: true, message: '登录成功' });
-    } catch (e) {
-      return jsonResponse(401, { ok: false, error: e instanceof Error ? e.message : '登录失败' });
-    }
-  }
-
+  // ── listSquads: login then parse /admin/my_squad HTML ──
   if (action === 'listSquads') {
     try {
       const jar = await loginCNF(username, password);
-      const listResp = await fetchWithJar(
-        `${CNF_BASE_URL}/admin/squad/getTableData`,
-        { method: 'GET', headers: { Accept: 'application/json, text/plain, */*' } }, jar
-      );
-      const listData = await listResp.json().catch(() => ({}));
-      if (!listResp.ok || Number(listData?.code) !== 1 || !Array.isArray(listData?.data)) {
-        throw new Error(String(listData?.msg || `班级列表获取失败: ${listResp.status}`));
+      const myResp = await fetchWithJar(`${CNF_BASE_URL}/admin/my_squad`, {
+        method: 'GET', headers: { Accept: 'text/html' },
+      }, jar);
+      if (myResp.status >= 300 && myResp.status < 400) {
+        throw new Error('登录态失效，请重新登录');
       }
-      const squads = listData.data.map(item => ({
-        id: Number(item?.id) || 0,
-        name: String(item?.name || '').trim(),
-        section: String(item?.section || '').trim(),
-        tutor: String(item?.tutor || '').trim(),
-        num: Number(item?.num) || 0,
-      }));
+      const myHtml = await myResp.text();
+      const squads = parseMySquadHtml(myHtml);
       return jsonResponse(200, { ok: true, squads, total: squads.length });
     } catch (e) {
-      return jsonResponse(502, { ok: false, error: e instanceof Error ? e.message : '获取班级列表失败' });
+      return jsonResponse(502, { ok: false, error: e instanceof Error ? e.message : '获取我的班级失败' });
     }
   }
 
-  if (action !== 'fetchRoster') return jsonResponse(400, { ok: false, error: 'action 必须为 login 或 fetchRoster' });
-  if (!squadId || !/^\d+$/.test(squadId)) return jsonResponse(400, { ok: false, error: '缺少有效的班级 ID（squad_id）' });
+  // ── fetchRoster: login then fetch student list for one squad ──
+  if (action === 'fetchRoster') {
+    if (!squadId || !/^\d+$/.test(squadId)) {
+      return jsonResponse(400, { ok: false, error: '缺少有效的班级 ID' });
+    }
+    try {
+      const jar = await loginCNF(username, password);
 
-  try {
-    const result = await fetchRoster(username, password, squadId, squadType);
-    return jsonResponse(200, { ok: true, squad: result.squad, students: result.students, total: result.students.length });
-  } catch (e) {
-    return jsonResponse(502, { ok: false, error: e instanceof Error ? e.message : '获取名单失败' });
+      const infoResp = await fetchWithJar(
+        `${CNF_BASE_URL}/admin/squad_console/getSquadInfo?squad_id=${encodeURIComponent(squadId)}`,
+        { method: 'GET', headers: { Accept: 'application/json' } }, jar
+      );
+      const infoData = await infoResp.json().catch(() => ({}));
+
+      const listResp = await fetchWithJar(
+        `${CNF_BASE_URL}/admin/squad/cop_mip/getStudentList?squad_id=${encodeURIComponent(squadId)}&squad_type=${encodeURIComponent(squadType)}`,
+        { method: 'GET', headers: { Accept: 'application/json' } }, jar
+      );
+      const listData = await listResp.json().catch(() => ({}));
+      if (!Array.isArray(listData?.data)) {
+        throw new Error(String(listData?.msg || `学生名单获取失败: ${listResp.status}`));
+      }
+
+      const students = listData.data.map(item => {
+        const en = String(item?.en_name || '').trim();
+        const ch = String(item?.ch_name || '').trim();
+        return {
+          id: Number(item?.id) || 0,
+          no: String(item?.no || '').trim(),
+          enName: en,
+          chName: ch,
+          displayName: en || ch || String(item?.no || '').trim(),
+        };
+      });
+
+      const squad = infoData?.data || {};
+      return jsonResponse(200, {
+        ok: true,
+        squad: {
+          id: Number(squad?.id) || Number(squadId),
+          name: String(squad?.name || '').trim(),
+          fullName: String(squad?.full_name || '').trim(),
+          type: squadType,
+        },
+        students,
+        total: students.length,
+      });
+    } catch (e) {
+      return jsonResponse(502, { ok: false, error: e instanceof Error ? e.message : '获取名单失败' });
+    }
   }
+
+  return jsonResponse(400, { ok: false, error: 'action 必须为 listSquads 或 fetchRoster' });
 }

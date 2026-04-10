@@ -2389,7 +2389,8 @@ const cnfLoginAction = async (): Promise<void> => {
       for (const s of squads) {
         const opt = document.createElement('option');
         opt.value = String(s.id);
-        opt.textContent = `${s.name}（${s.section} · ${s.tutor} · ${s.num}人）`;
+        opt.dataset.type = s.type || 'offline';
+        opt.textContent = `${s.name}（${s.group || s.section}）`;
         select.appendChild(opt);
       }
     }
@@ -2413,18 +2414,21 @@ const cnfLoginAction = async (): Promise<void> => {
 const cnfFetchAction = async (): Promise<void> => {
   if (cnfSyncBusy) return;
   const creds = getCnfFormCreds();
-  const squadId = byId<HTMLSelectElement>('cnfSquadSelect').value;
+  const select = byId<HTMLSelectElement>('cnfSquadSelect');
+  const squadId = select.value;
   if (!squadId) {
     setCnfStatus('请先选择一个班级', 'cnf-err');
     return;
   }
+  const selectedOption = select.options[select.selectedIndex];
+  const squadType = selectedOption?.dataset.type || 'offline';
 
   cnfSyncBusy = true;
   setCnfStatus('正在抓取学生名单...', 'cnf-busy');
   hideCnfSyncDialog();
 
   try {
-    const result = await cnfFetchRoster(creds, squadId, 'offline');
+    const result = await cnfFetchRoster(creds, squadId, squadType);
     saveCnfCredentials(creds);
 
     const names = result.students.map((s) => s.displayName).filter(Boolean);
@@ -2447,7 +2451,7 @@ const cnfFetchAction = async (): Promise<void> => {
     if (config) {
       config.cnf = {
         squadId,
-        squadType: 'offline',
+        squadType: squadType as 'offline' | 'online',
         sessionToken: '',
         loginUsername: creds.username,
         lastSyncedAt: new Date().toISOString()
